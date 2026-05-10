@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LoveQuest 💖 Alpha v3</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="duel.css" />
+</head>
+<body>
+
+  <!-- ── GAME CANVAS ──────────────────────────────────────────────── -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- ── TOP BAR ──────────────────────────────────────────────────── -->
+  <div id="topBar">
+    <div id="gameTitle">
+      LoveQuest 💖
+      <span>Alpha v3</span>
+    </div>
+    <div id="roundBadge">Round <span id="roundNum">1</span></div>
+  </div>
+
+  <!-- ── PLAYER CARDS ─────────────────────────────────────────────── -->
+  <div id="playerCards">
+
+    <div class="pcard active" id="pcard-0">
+      <div class="pc-name">
+        <div class="pc-dot" style="background:#9e15c0"></div>
+        <span id="pc-name-0">You</span>
+      </div>
+      <div class="pc-row">
+        <span class="pc-coins">💰 10</span>
+        <span class="pc-stars">⭐ 0</span>
+      </div>
+      <div class="pc-inventory"><span class="inv-empty">No items</span></div>
+    </div>
+
+    <div class="pcard" id="pcard-1">
+      <div class="pc-name">
+        <div class="pc-dot" style="background:#e936da"></div>
+        <span id="pc-name-1">Her</span>
+      </div>
+      <div class="pc-row">
+        <span class="pc-coins">💰 10</span>
+        <span class="pc-stars">⭐ 0</span>
+      </div>
+      <div class="pc-inventory"><span class="inv-empty">No items</span></div>
+    </div>
+
+    <div class="pcard" id="pcard-2">
+      <div class="pc-name">
+        <div class="pc-dot" style="background:#1a6a8a"></div>
+        <span id="pc-name-2">Romeo</span>
+      </div>
+      <div class="pc-row">
+        <span class="pc-coins">💰 10</span>
+        <span class="pc-stars">⭐ 0</span>
+      </div>
+      <div class="pc-inventory"><span class="inv-empty">No items</span></div>
+    </div>
+
+    <div class="pcard" id="pcard-3">
+      <div class="pc-name">
+        <div class="pc-dot" style="background:#06d664"></div>
+        <span id="pc-name-3">Juliet</span>
+      </div>
+      <div class="pc-row">
+        <span class="pc-coins">💰 10</span>
+        <span class="pc-stars">⭐ 0</span>
+      </div>
+      <div class="pc-inventory"><span class="inv-empty">No items</span></div>
+    </div>
+
+  </div>
+
+  <!-- ── SPACE LEGEND ─────────────────────────────────────────────── -->
+  <div id="legend">
+    <h4>SPACES</h4>
+    <div class="leg-row"><div class="leg-dot" style="background:#4cc9f0"></div>💰 +3 coins</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#ef233c"></div>💸 -3 coins</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#ffd60a"></div>⭐ Star</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#c77dff"></div>💌 Love Event</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#a855f7"></div>🎮 Mini Game</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#f4845f"></div>⚔️ Duel</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#38b000"></div>🛒 Board Shop</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#7209b7"></div>⚗️ Duel Shop</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#06d6a0"></div>🏠 START</div>
+    <div class="leg-divider"></div>
+    <div class="leg-note">○○ = Fork ahead</div>
+  </div>
+
+  <!-- ── ITEM BAR ──────────────────────────────────────────────────── -->
+  <div id="itemBar" style="display:none;"></div>
+
+  <!-- ── ACTION BAR ────────────────────────────────────────────────── -->
+  <div id="actionBar">
+    <button class="btn btn-secondary" onclick="toggleZoom()">🗺 Map</button>
+    <button class="btn btn-secondary" onclick="showMultiplayerPanel()" title="Multiplayer">💕</button>
+
+    <div id="diceContainer">
+      <span id="diceLabel">Dice</span>
+      <div id="diceBox">
+        <span id="diceValue">?</span>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="btnRoll" onclick="rollDice()">Roll 🎲</button>
+  </div>
+
+  <!-- ── TOAST ─────────────────────────────────────────────────────── -->
+  <div id="toast"></div>
+
+  <!-- ── POPUP OVERLAY  (space landing + star offer) ──────────────── -->
+  <div id="popupOverlay">
+    <div id="popupBox">
+      <span id="popupIcon">💰</span>
+      <div id="popupText">You landed on a space!</div>
+      <button id="popupBtn">OK!</button>
+      <div id="popupChoiceRow" style="display:none;">
+        <button id="popupYes" class="choice-btn choice-yes">Yes!</button>
+        <button id="popupNo"  class="choice-btn choice-no">No</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MONTH BADGE ───────────────────────────────────────────────── -->
+  <div id="monthBadge">14 months 💖</div>
+
+  <!-- ── SCRIPTS ──────────────────────────────────────────────────── -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.2/peerjs.min.js"></script>
+  <script src="config.js"></script>
+  <script src="music.js"></script>
+  <script src="game.js"></script>
+  <script src="minigames.js"></script>
+  <script src="duel.js"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      document.getElementById("pc-name-0").textContent = CONFIG.couple.player1.name;
+      document.getElementById("pc-name-1").textContent = CONFIG.couple.player2.name;
+      document.getElementById("pc-name-2").textContent = CONFIG.couple.ai1.name;
+      document.getElementById("pc-name-3").textContent = CONFIG.couple.ai2.name;
+
+      const dots = document.querySelectorAll(".pc-dot");
+      dots[0].style.background = CONFIG.couple.player1.color;
+      dots[1].style.background = CONFIG.couple.player2.color;
+      dots[2].style.background = CONFIG.couple.ai1.color;
+      dots[3].style.background = CONFIG.couple.ai2.color;
+
+      initGame();
+    });
+  </script>
+
+</body>
+</html>
