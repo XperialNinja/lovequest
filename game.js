@@ -3,7 +3,6 @@
 //  Fixes: overlapping nodes, missing icons, arrow-based fork UI,
 //         organic map using the centre space
 // ============================================================
-
 const WORLD_W = 3200;
 const WORLD_H = 2200;
 const SPACE_R = 30;   // circle radius
