@@ -7,14 +7,14 @@ const CONFIG = {
   // ── COUPLE INFO ──────────────────────────────────────────
   couple: {
     player1: {
-      name: "You",
+      name: "Lanlanland",
       // Drop your PNG into assets/ and update the path:
       imagePath: "DinoCharacter.png",
       color: "#9e15c0",
       emoji: "💙",
     },
     player2: {
-      name: "Her",
+      name: "Merryberry",
       imagePath: "Meredith.png",
       color: "#e936da",
       emoji: "💜",
@@ -35,7 +35,7 @@ const CONFIG = {
 
   // ── GAME SETTINGS ────────────────────────────────────────
   game: {
-    totalRounds: 10,
+    totalRounds: 14,  // 14 months 💖
     diceMin: 1,
     diceMax: 6,
     starsToWin: 3,
