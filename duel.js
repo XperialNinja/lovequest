@@ -155,26 +155,20 @@ const DUEL = (() => {
     HOLE_CELLS = ARENA_LAYOUTS[layoutIdx];
     currentArenaName = ARENA_NAMES[layoutIdx];
 
-    // Show the pre-duel spin wheel overlay (format then bet)
+    // Show spin wheels first, then start combat
     showPreDuelSpins(landingPlayer, allPlayers);
   }
 
-  // ── PRE-DUEL SPINS ───────────────────────────────────────────
-  // Two sequential spinning wheels:
-  //   1) Format wheel: 1v1 or 2v2
-  //   2) Bet wheel: how many coins are on the line
-  // After both resolve, fighters are built and combat begins.
-
+  // ─────────────────────────────────────────────────────────────
+  //  PRE-DUEL SPIN SEQUENCE
+  // ─────────────────────────────────────────────────────────────
   let preDuelOverlay = null;
 
   function showPreDuelSpins(landingPlayer, allPlayers) {
-    // Build a full-screen overlay for the spin sequence
     const ov = document.createElement("div");
     ov.id = "preDuelOverlay";
     document.body.appendChild(ov);
     preDuelOverlay = ov;
-
-    // Step 1: Format wheel
     showFormatWheel(landingPlayer, allPlayers);
   }
 
@@ -182,86 +176,65 @@ const DUEL = (() => {
     if (preDuelOverlay) { preDuelOverlay.remove(); preDuelOverlay = null; }
   }
 
-  // ─────────────────────────────────────────────────────────────
-  //  WHEEL 1 — FORMAT (1v1 or 2v2)
-  // ─────────────────────────────────────────────────────────────
   function showFormatWheel(landingPlayer, allPlayers) {
-    const formatSegments = [
-      { label: "1v1", icon: "⚔️",  color: "#f4845f", weight: 2 },
-      { label: "2v2", icon: "🤝",  color: "#c77dff", weight: 1 },
-      { label: "1v1", icon: "⚔️",  color: "#f4845f", weight: 2 },
-      { label: "2v2", icon: "🤝",  color: "#c77dff", weight: 1 },
-      { label: "1v1", icon: "⚔️",  color: "#f4845f", weight: 2 },
-      { label: "1v1", icon: "⚔️",  color: "#f4845f", weight: 2 },
+    const segs = [
+      { label:"1v1", icon:"⚔️", color:"#f4845f" },
+      { label:"2v2", icon:"🤝", color:"#c77dff" },
+      { label:"1v1", icon:"⚔️", color:"#f4845f" },
+      { label:"2v2", icon:"🤝", color:"#c77dff" },
+      { label:"1v1", icon:"⚔️", color:"#f4845f" },
+      { label:"1v1", icon:"⚔️", color:"#f4845f" },
     ];
-    // Pre-decide result
-    const formatResult = Math.random() < 0.6 ? "1v1" : "2v2";
-    const resultIdx = formatSegments.findIndex(s => s.label === formatResult);
-
-    renderSpinWheel(preDuelOverlay, {
-      title: "⚔️ Duel Format!",
-      subtitle: "What kind of battle will it be?",
-      segments: formatSegments,
-      targetIndex: resultIdx,
+    const result = Math.random() < 0.6 ? "1v1" : "2v2";
+    const targetIdx = segs.findIndex(s => s.label === result);
+    runSpinWheel(preDuelOverlay, {
+      title: "⚔️ Battle Format!",
+      subtitle: "What kind of duel will it be?",
+      segments: segs,
+      targetIndex: targetIdx,
       onResult: (seg) => {
-        setTimeout(() => {
-          showBetWheel(landingPlayer, allPlayers, seg.label);
-        }, 900);
+        setTimeout(() => showBetWheel(landingPlayer, allPlayers, seg.label), 800);
       }
     });
   }
 
-  // ─────────────────────────────────────────────────────────────
-  //  WHEEL 2 — BET (coins at stake)
-  // ─────────────────────────────────────────────────────────────
   function showBetWheel(landingPlayer, allPlayers, format) {
-    const betSegments = [
-      { label: "5",  icon: "💰", color: "#4cc9f0", bet: 5  },
-      { label: "10", icon: "💰", color: "#06d6a0", bet: 10 },
-      { label: "5",  icon: "💰", color: "#4cc9f0", bet: 5  },
-      { label: "15", icon: "💰", color: "#ffd60a", bet: 15 },
-      { label: "10", icon: "💰", color: "#06d6a0", bet: 10 },
-      { label: "20", icon: "🌟", color: "#ff6b9d", bet: 20 },
-      { label: "5",  icon: "💰", color: "#4cc9f0", bet: 5  },
-      { label: "10", icon: "💰", color: "#06d6a0", bet: 10 },
+    const segs = [
+      { label:"5",  icon:"💰", color:"#4cc9f0", bet:5  },
+      { label:"10", icon:"💰", color:"#06d6a0", bet:10 },
+      { label:"5",  icon:"💰", color:"#4cc9f0", bet:5  },
+      { label:"15", icon:"💰", color:"#ffd60a", bet:15 },
+      { label:"10", icon:"💰", color:"#06d6a0", bet:10 },
+      { label:"20", icon:"🌟", color:"#ff6b9d", bet:20 },
+      { label:"5",  icon:"💰", color:"#4cc9f0", bet:5  },
+      { label:"10", icon:"💰", color:"#06d6a0", bet:10 },
     ];
-    const targetIdx = Math.floor(Math.random() * betSegments.length);
-    const betResult = betSegments[targetIdx].bet;
-
-    renderSpinWheel(preDuelOverlay, {
+    const targetIdx = Math.floor(Math.random() * segs.length);
+    runSpinWheel(preDuelOverlay, {
       title: "🎰 Stakes!",
-      subtitle: `${format} — What's on the line?`,
-      segments: betSegments,
+      subtitle: `${format} — How much is on the line?`,
+      segments: segs,
       targetIndex: targetIdx,
-      formatLabel: format,
       onResult: (seg) => {
         setTimeout(() => {
           removePreDuelOverlay();
           startActualDuel(landingPlayer, allPlayers, format, seg.bet);
-        }, 900);
+        }, 800);
       }
     });
   }
 
   // ─────────────────────────────────────────────────────────────
-  //  GENERIC ANIMATED SPIN WHEEL RENDERER
+  //  GENERIC SPIN WHEEL — auto-spins immediately, no button
   // ─────────────────────────────────────────────────────────────
-  function renderSpinWheel(container, { title, subtitle, segments, targetIndex, onResult, formatLabel }) {
-    container.innerHTML = ""; // clear for second wheel
-
+  function runSpinWheel(container, { title, subtitle, segments, targetIndex, onResult }) {
+    container.innerHTML = "";
     const n = segments.length;
     const sliceDeg = 360 / n;
-    // We'll spin to land on targetIndex.
-    // The wheel spins so that targetIndex is at the top (270deg from 0).
-    // Each slice centre is at: i * sliceDeg + sliceDeg/2
-    // We need that centre to end at 270deg (top).
     const targetCentre = targetIndex * sliceDeg + sliceDeg / 2;
-    const stopAngle = 270 - targetCentre; // how much to rotate the wheel
-    // Add multiple full spins for drama
-    const totalSpin = 360 * 6 + ((stopAngle % 360) + 360) % 360;
-
-    const size = 300;
-    const r = size / 2;
+    const stopAngle = 270 - targetCentre;
+    const totalSpin = 360 * 7 + ((stopAngle % 360) + 360) % 360;
+    const SIZE = 300, R = SIZE / 2;
 
     container.innerHTML = `
       <div class="sw-backdrop">
@@ -269,119 +242,94 @@ const DUEL = (() => {
         <div class="sw-subtitle">${subtitle}</div>
         <div class="sw-wheel-wrap">
           <div class="sw-pointer">▼</div>
-          <canvas id="swCanvas" width="${size}" height="${size}"></canvas>
+          <canvas id="swCanvas" width="${SIZE}" height="${SIZE}"></canvas>
           <div class="sw-center-dot"></div>
         </div>
-        <div class="sw-result-text" id="swResult" style="opacity:0">...</div>
-        <button class="sw-spin-btn" id="swBtn">🎰 Spin!</button>
-      </div>
-    `;
+        <div class="sw-result-text" id="swResult" style="opacity:0"> </div>
+      </div>`;
 
     const canvas = container.querySelector("#swCanvas");
     const ctx    = canvas.getContext("2d");
-    let currentAngle = 0;
 
-    function drawWheel(angle) {
-      ctx.clearRect(0, 0, size, size);
+    function drawWheel(angleDeg) {
+      ctx.clearRect(0, 0, SIZE, SIZE);
       segments.forEach((seg, i) => {
-        const start = (angle + i * sliceDeg) * Math.PI / 180;
-        const end   = (angle + (i + 1) * sliceDeg) * Math.PI / 180;
-
-        // Slice fill
+        const startRad = ((angleDeg + i * sliceDeg) * Math.PI) / 180;
+        const endRad   = ((angleDeg + (i+1) * sliceDeg) * Math.PI) / 180;
         ctx.beginPath();
-        ctx.moveTo(r, r);
-        ctx.arc(r, r, r - 2, start, end);
+        ctx.moveTo(R, R);
+        ctx.arc(R, R, R - 3, startRad, endRad);
         ctx.closePath();
         ctx.fillStyle = seg.color;
-        ctx.globalAlpha = 0.88;
-        ctx.fill();
-
-        // Slice border
+        ctx.globalAlpha = 0.90; ctx.fill();
         ctx.globalAlpha = 1;
-        ctx.strokeStyle = "rgba(255,255,255,0.25)";
-        ctx.lineWidth   = 2;
-        ctx.stroke();
+        ctx.strokeStyle = "rgba(255,255,255,0.28)";
+        ctx.lineWidth = 2; ctx.stroke();
 
-        // Label
         ctx.save();
-        ctx.translate(r, r);
-        ctx.rotate((angle + i * sliceDeg + sliceDeg / 2) * Math.PI / 180);
-        ctx.textAlign    = "right";
-        ctx.textBaseline = "middle";
-        ctx.font         = "bold 15px 'Fredoka One', cursive";
-        ctx.fillStyle    = "white";
-        ctx.shadowColor  = "rgba(0,0,0,0.7)";
-        ctx.shadowBlur   = 4;
-        ctx.fillText(`${seg.icon} ${seg.label}`, r - 12, 0);
+        ctx.translate(R, R);
+        ctx.rotate(((angleDeg + i * sliceDeg + sliceDeg / 2) * Math.PI) / 180);
+        ctx.textAlign = "right"; ctx.textBaseline = "middle";
+        ctx.font = "bold 14px 'Fredoka One',cursive";
+        ctx.fillStyle = "white";
+        ctx.shadowColor = "rgba(0,0,0,0.8)"; ctx.shadowBlur = 5;
+        ctx.fillText(`${seg.icon} ${seg.label}`, R - 14, 0);
         ctx.restore();
       });
-
-      // Outer ring
       ctx.beginPath();
-      ctx.arc(r, r, r - 2, 0, Math.PI * 2);
-      ctx.strokeStyle = "rgba(255,255,255,0.4)";
-      ctx.lineWidth   = 4;
-      ctx.stroke();
+      ctx.arc(R, R, R - 3, 0, Math.PI*2);
+      ctx.strokeStyle = "rgba(255,255,255,0.45)";
+      ctx.lineWidth = 5; ctx.stroke();
     }
 
     drawWheel(0);
 
-    let spinning = false;
-    container.querySelector("#swBtn").onclick = () => {
-      if (spinning) return;
-      spinning = true;
-      container.querySelector("#swBtn").style.display = "none";
+    // AUTO-SPIN after a short dramatic pause
+    const DURATION = 4500;
+    let startTs = null;
+    const easeOut = t => 1 - Math.pow(1 - t, 4);
 
-      const duration = 4200;
-      const start = performance.now();
-      const ease  = (t) => t < 0.5
-        ? 4 * t * t * t
-        : 1 - Math.pow(-2 * t + 2, 3) / 2;
-
-      function frame(now) {
-        const elapsed  = now - start;
-        const progress = Math.min(elapsed / duration, 1);
-        currentAngle   = ease(progress) * totalSpin;
-        drawWheel(currentAngle % 360);
+    setTimeout(() => {
+      function frame(ts) {
+        if (!startTs) startTs = ts;
+        const progress = Math.min((ts - startTs) / DURATION, 1);
+        drawWheel(easeOut(progress) * totalSpin % 360);
 
         if (progress < 1) {
           requestAnimationFrame(frame);
         } else {
-          // Show result
           const seg = segments[targetIndex];
           const resultEl = container.querySelector("#swResult");
           if (resultEl) {
-            resultEl.textContent = `${seg.icon} ${seg.label}${seg.bet ? ` coins` : ``}!`;
+            resultEl.textContent = `${seg.icon} ${seg.label}${seg.bet ? ` coins!` : `!`}`;
             resultEl.style.opacity = "1";
-            resultEl.style.transform = "scale(1.15)";
-            setTimeout(() => { resultEl.style.transform = "scale(1)"; }, 200);
+            resultEl.style.transform = "scale(1.2)";
+            setTimeout(() => { if (resultEl) resultEl.style.transform = "scale(1)"; }, 200);
           }
           onResult(seg);
         }
       }
       requestAnimationFrame(frame);
-    };
+    }, 600); // 600ms dramatic pause before spin starts
   }
 
   // ─────────────────────────────────────────────────────────────
   //  START ACTUAL DUEL — after spins resolve
   // ─────────────────────────────────────────────────────────────
   function startActualDuel(landingPlayer, allPlayers, format, betAmount) {
-    const is2v2 = format === "2v2";
+    const is2v2 = format === "2v2" && allPlayers.length >= 4;
 
-    // Identify the 4 players: player1=You, player2=Her, ai1=Romeo, ai2=Juliet
-    // Team A: players[0] + players[1]  (You + Her)
-    // Team B: players[2] + players[3]  (Romeo + Juliet)
     let fighters;
-    if (is2v2 && allPlayers.length >= 4) {
+    if (is2v2) {
+      // Team 0: You (index 0) + Her (index 1)
+      // Team 1: Romeo (index 2) + Juliet (index 3)
       fighters = [
-        makeFighter(allPlayers[0], 0),  // You
-        makeFighter(allPlayers[1], 0),  // Her  (same team)
-        makeFighter(allPlayers[2], 1),  // Romeo
-        makeFighter(allPlayers[3], 1),  // Juliet (same team)
+        makeFighter(allPlayers[0], 0),
+        makeFighter(allPlayers[1], 0),
+        makeFighter(allPlayers[2], 1),
+        makeFighter(allPlayers[3], 1),
       ];
     } else {
-      // 1v1: landing player vs random opponent
       const others   = allPlayers.filter(p => p !== landingPlayer);
       const opponent = others[Math.floor(Math.random() * others.length)];
       fighters = [
@@ -394,15 +342,13 @@ const DUEL = (() => {
     fighters.sort((a, b) => b.initRoll - a.initRoll);
     if (fighters[0].initRoll === fighters[1].initRoll) fighters.sort(() => Math.random()-0.5);
 
-    const humanFighterIndex = fighters.findIndex(
-      f => f.boardPlayer === landingPlayer ||
-           (is2v2 && f.boardPlayer === allPlayers[0])
-    );
+    // Human controls all fighters on team 0
+    const humanFighterIndex = fighters.findIndex(f => f.teamIndex === 0);
 
     duelState = {
       fighters,
       humanFighterIndex,
-      humanTeam: 0,       // team index that the human controls
+      humanTeam: 0,
       is2v2,
       betAmount,
       turn: 0,
@@ -419,7 +365,6 @@ const DUEL = (() => {
       allPlayers,
     };
 
-    // Place fighters — 2v2 in quadrants, 1v1 in opposite corners
     if (is2v2) {
       placeOnGrid(fighters[0], 1, 1);
       placeOnGrid(fighters[1], 2, 1);
@@ -530,43 +475,31 @@ const DUEL = (() => {
 
   // ── ROLL REVEAL SCREEN ───────────────────────────────────────
   function showRollReveal() {
-    const fighters = duelState.fighters;
-    const is2v2    = duelState.is2v2;
-    const bet      = duelState.betAmount || 10;
+    const { fighters, is2v2, betAmount } = duelState;
+    const bet = betAmount || 10;
+    const box = document.getElementById("duelInitBox");
+    if (!box) return;
 
-    // Build fighter rows — either 2 or 4 fighters
-    const fighterHTML = fighters.map(f => `
-      <div class="di-fighter">
-        <div class="di-avatar" style="background:${f.color}">${f.emoji}</div>
-        <div class="di-name">${f.name}</div>
-        <div class="di-roll">🎲 ${f.initRoll}</div>
-      </div>
-    `).join(is2v2
-      ? `<div class="di-teammate">+</div>`  // inserted between team members... handled below
-      : ``
-    );
-
-    // For 2v2 show: [You + Her] VS [Romeo + Juliet]
     let matchupHTML;
     if (is2v2) {
+      const teamA = fighters.filter(f => f.teamIndex === 0);
+      const teamB = fighters.filter(f => f.teamIndex === 1);
       matchupHTML = `
         <div class="di-row">
-          <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
-            ${fighters.filter(f=>f.teamIndex===0).map(f=>`
-              <div class="di-fighter">
-                <div class="di-avatar" style="background:${f.color};width:60px;height:60px;font-size:32px">${f.emoji}</div>
-                <div class="di-name" style="font-size:15px">${f.name}</div>
-                <div class="di-roll" style="font-size:20px;padding:4px 12px">🎲 ${f.initRoll}</div>
-              </div>`).join("")}
+          <div class="di-team">
+            ${teamA.map(f=>`<div class="di-fighter">
+              <div class="di-avatar" style="background:${f.color};width:62px;height:62px;font-size:34px">${f.emoji}</div>
+              <div class="di-name" style="font-size:15px">${f.name}</div>
+              <div class="di-roll" style="font-size:20px;padding:4px 12px">🎲 ${f.initRoll}</div>
+            </div>`).join("")}
           </div>
           <div class="di-vs">VS</div>
-          <div style="display:flex;flex-direction:column;align-items:center;gap:8px">
-            ${fighters.filter(f=>f.teamIndex===1).map(f=>`
-              <div class="di-fighter">
-                <div class="di-avatar" style="background:${f.color};width:60px;height:60px;font-size:32px">${f.emoji}</div>
-                <div class="di-name" style="font-size:15px">${f.name}</div>
-                <div class="di-roll" style="font-size:20px;padding:4px 12px">🎲 ${f.initRoll}</div>
-              </div>`).join("")}
+          <div class="di-team">
+            ${teamB.map(f=>`<div class="di-fighter">
+              <div class="di-avatar" style="background:${f.color};width:62px;height:62px;font-size:34px">${f.emoji}</div>
+              <div class="di-name" style="font-size:15px">${f.name}</div>
+              <div class="di-roll" style="font-size:20px;padding:4px 12px">🎲 ${f.initRoll}</div>
+            </div>`).join("")}
           </div>
         </div>`;
     } else {
@@ -587,8 +520,6 @@ const DUEL = (() => {
         </div>`;
     }
 
-    const box = document.getElementById("duelInitBox");
-    if (!box) return;
     box.innerHTML = `
       <div class="di-title">${is2v2 ? "🤝 2v2 Duel!" : "⚔️ 1v1 Duel!"}</div>
       ${matchupHTML}
@@ -671,11 +602,15 @@ const DUEL = (() => {
         for (let c = 0; c < GRID_COLS; c++) {
           if (HOLE_CELLS.has(`${r},${c}`)) continue;
           const dist = Math.abs(r - f.row) + Math.abs(c - f.col);
-          if (dist <= castRange) duelState.validTiles.push({r,c});
+          if (dist <= castRange) {
+            duelState.validTiles.push({r,c});
+            duelState.highlightCells.push({r, c, color: "rgba(239,35,60,0.45)"});
+          }
         }
       }
       duelState.phase = "pickTile";
-      setStatus(`🔥 Fireball — pick target tile, or click another card to switch`);
+      setStatus(`🔥 Fireball — pick target tile (range ${castRange})`);
+
     } else if (card.type === "heal") {
       playCard(card, null);
       return;
@@ -1042,7 +977,6 @@ function playCard(card, target) {
 
   function nextTurn() {
     let next = (duelState.turn + 1) % duelState.fighters.length;
-    // Skip dead fighters
     let safety = 0;
     while (duelState.fighters[next].hp <= 0 && safety++ < duelState.fighters.length) {
       next = (next + 1) % duelState.fighters.length;
@@ -1057,7 +991,6 @@ function playCard(card, target) {
       : duelState.turn === duelState.humanFighterIndex;
 
     if (isHumanTeamMember) {
-      // Human controls this fighter
       duelState.humanFighterIndex = duelState.turn;
       setStatus(`${f.name}'s turn — pick a card`);
     } else {
@@ -1543,10 +1476,8 @@ function playCard(card, target) {
     return duelState.fighters.find(f => f.hp <= 0) || null;
   }
 
-  function checkTeamDead() {
-    // Returns the dead team index if all members of a team are at 0 HP
-    const teams = [0, 1];
-    for (const ti of teams) {
+  function checkTeamWiped() {
+    for (const ti of [0, 1]) {
       const members = duelState.fighters.filter(f => f.teamIndex === ti);
       if (members.every(f => f.hp <= 0)) return ti;
     }
@@ -1554,24 +1485,16 @@ function playCard(card, target) {
   }
 
   function onFighterDead(deadFighter) {
-    const is2v2 = duelState.is2v2;
     const px = cellToPx(deadFighter.row, deadFighter.col);
     addFloatText(px.x, px.y - 60, "💀 KO!", "#ef233c", 2000);
 
-    if (is2v2) {
-      // Check if the whole team is wiped
-      const deadTeam = checkTeamDead();
-      if (deadTeam !== null) {
-        const winner = duelState.fighters.find(f => f.teamIndex !== deadTeam && f.hp > 0);
+    if (duelState.is2v2) {
+      const wipedTeam = checkTeamWiped();
+      if (wipedTeam !== null) {
+        const winner = duelState.fighters.find(f => f.teamIndex !== wipedTeam && f.hp > 0);
         setTimeout(() => resolveDuel(winner, deadFighter), 1200);
       } else {
-        // One fighter down but teammates still alive — continue
-        setTimeout(() => {
-          // Skip dead fighters' turns
-          if (duelState.phase !== "over") {
-            nextTurn();
-          }
-        }, 1000);
+        setTimeout(() => { if (duelState && duelState.phase !== "over") nextTurn(); }, 1000);
       }
     } else {
       const winner = duelState.fighters.find(f => f !== deadFighter);
@@ -1580,26 +1503,34 @@ function playCard(card, target) {
   }
 
   function resolveDuel(winner, loser) {
-    const PRIZE = duelState.betAmount || 10;
-    const is2v2 = duelState.is2v2;
+    const PRIZE  = duelState.betAmount || 10;
+    const is2v2  = duelState.is2v2;
+    // Track duel win for stats
+    if (winner && winner.boardPlayer && winner.boardPlayer.stats) {
+      winner.boardPlayer.stats.duelsWon++;
+    }
+    if (is2v2) {
+      const wt = duelState.fighters.filter(f=>f.teamIndex===winner.teamIndex);
+      wt.forEach(f=>{ if(f!==winner&&f.boardPlayer&&f.boardPlayer.stats) f.boardPlayer.stats.duelsWon++; });
+    }
 
     if (is2v2) {
-      // Winner team vs loser team — transfer from each loser to each winner
       const winTeam  = duelState.fighters.filter(f => f.teamIndex === winner.teamIndex);
       const loseTeam = duelState.fighters.filter(f => f.teamIndex !== winner.teamIndex);
-      const perPlayer = Math.floor(PRIZE / 2) || 1;
-
+      const perPlayer = Math.max(1, Math.floor(PRIZE / 2));
       let msgs = [];
       loseTeam.forEach(lf => {
         const take = Math.min(lf.boardPlayer.coins, perPlayer);
         lf.boardPlayer.coins -= take;
-        // Split winnings evenly across winners
         winTeam.forEach(wf => { wf.boardPlayer.coins += Math.floor(take / winTeam.length); });
         if (take > 0) msgs.push(`${lf.name} lost ${take} 💰`);
-        else if (lf.boardPlayer.stars > 0) { lf.boardPlayer.stars--; winTeam[0].boardPlayer.stars++; msgs.push(`${lf.name} lost ⭐`); }
+        else if (lf.boardPlayer.stars > 0) {
+          lf.boardPlayer.stars--;
+          winTeam[0].boardPlayer.stars++;
+          msgs.push(`${lf.name} lost ⭐`);
+        }
       });
-
-      const winnerName = winTeam.map(f=>f.name).join(" & ");
+      const winnerName = winTeam.map(f => f.name).join(" & ");
       showDuelResult(winner, `${winnerName} win!\n${msgs.join(", ")}`);
     } else {
       const loserBoard  = loser.boardPlayer;
@@ -1632,6 +1563,46 @@ function playCard(card, target) {
 
     const gridPxW = GRID_COLS * (CELL_SIZE + CELL_GAP) + CELL_GAP;
     const gridPxH = GRID_ROWS * (CELL_SIZE + CELL_GAP) + CELL_GAP;
+    const is2v2   = duelState.is2v2;
+
+    const teamA = fighters.filter(f => f.teamIndex === 0);
+    const teamB = fighters.filter(f => f.teamIndex === 1);
+
+    // HP bar HTML — team A on left, team B on right, separated by divider
+    function hpBarHTML(f, i) {
+      return `<div class="dhp-row" id="dhp-${i}">
+        <div class="dhp-avatar" style="background:${f.color}">${f.emoji}</div>
+        <div class="dhp-info">
+          <div class="dhp-name">${f.name}</div>
+          <div class="dhp-bar-bg">
+            <div class="dhp-bar-fill" id="dhp-fill-${i}" style="width:100%;background:${f.color}"></div>
+          </div>
+          <div class="dhp-hp" id="dhp-hp-${i}">${f.hp} / ${f.maxHp}</div>
+        </div>
+      </div>`;
+    }
+
+    const hpBarsHTML = is2v2
+      ? `${teamA.map((f,i) => hpBarHTML(f, fighters.indexOf(f))).join("")}
+         <div class="dhp-divider">VS</div>
+         ${teamB.map((f,i) => hpBarHTML(f, fighters.indexOf(f))).join("")}`
+      : fighters.map((f,i) => hpBarHTML(f,i)).join(`<div class="dhp-divider">VS</div>`);
+
+    // Side panel HTML — left = team A, right = team B
+    function sidePanelHTML(team, side, teamFighters) {
+      return `<div class="duel-side-panel dsp-${side}" id="duel-side-${side}">
+        <div class="dsp-team-label">${side === "left" ? "Your Team" : "Rivals"}</div>
+        ${teamFighters.map((f, fi) => `
+          <div class="dsp-fighter-block">
+            <div class="dsp-name" style="color:${f.color}">${f.emoji} ${f.name}</div>
+            <div class="dsp-label">Buffs</div>
+            <div class="dsp-buffs" id="duel-buffs-${fighters.indexOf(f)}">
+              <span class="dbuff-empty">No buffs</span>
+            </div>
+          </div>
+        `).join("")}
+      </div>`;
+    }
 
     const ov = document.createElement("div");
     ov.id = "duelOverlay";
@@ -1641,59 +1612,34 @@ function playCard(card, target) {
       <div id="duelResultBox" style="display:none;"></div>
 
       <div id="duelMain">
-        <div id="duelHpBars">
-          ${fighters.map((f,i) => `
-            <div class="dhp-row" id="dhp-${i}">
-              <div class="dhp-avatar" style="background:${f.color}">${f.emoji}</div>
-              <div class="dhp-info">
-                <div class="dhp-name">${f.name}</div>
-                <div class="dhp-bar-bg">
-                  <div class="dhp-bar-fill" id="dhp-fill-${i}" style="width:100%;background:${f.color}"></div>
-                </div>
-                <div class="dhp-hp" id="dhp-hp-${i}">${f.hp} / ${f.maxHp}</div>
-              </div>
-            </div>
-          `).join("")}
-        </div>
+        <div id="duelHpBars">${hpBarsHTML}</div>
 
         <div id="duelBattleRow">
-          <div class="duel-side-panel" id="duel-side-0">
-            <div class="dsp-name" style="color:${fighters[0].color}">${fighters[0].emoji} ${fighters[0].name}</div>
-            <div class="dsp-label">Active Buffs</div>
-            <div class="dsp-buffs" id="duel-buffs-0"><span class="dbuff-empty">No buffs</span></div>
-          </div>
+          ${sidePanelHTML(0, "left",  teamA)}
 
           <div id="duelArena">
             <div id="duelArenaInner" style="
               position:relative;
               width:${gridPxW}px;
               height:${gridPxH}px;
-              flex-shrink:0;
-            ">
+              flex-shrink:0;">
               <div id="duelGrid" style="
                 position:absolute; top:0; left:0;
                 width:${gridPxW}px; height:${gridPxH}px;
                 display:grid;
                 grid-template-columns: repeat(${GRID_COLS}, ${CELL_SIZE}px);
                 grid-template-rows: repeat(${GRID_ROWS}, ${CELL_SIZE}px);
-                gap:${CELL_GAP}px;
-                padding:${CELL_GAP}px;
-                z-index:1;
+                gap:${CELL_GAP}px; padding:${CELL_GAP}px; z-index:1;
               "></div>
               <canvas id="duelCanvas" width="${gridPxW}" height="${gridPxH}" style="
                 position:absolute; top:0; left:0;
                 width:${gridPxW}px; height:${gridPxH}px;
-                z-index:2;
-                pointer-events:none;
+                z-index:2; pointer-events:none;
               "></canvas>
             </div>
           </div>
 
-          <div class="duel-side-panel" id="duel-side-1">
-            <div class="dsp-name" style="color:${fighters[1].color}">${fighters[1].emoji} ${fighters[1].name}</div>
-            <div class="dsp-label">Active Buffs</div>
-            <div class="dsp-buffs" id="duel-buffs-1"><span class="dbuff-empty">No buffs</span></div>
-          </div>
+          ${sidePanelHTML(1, "right", teamB)}
         </div>
 
         <div id="duelControls">
@@ -1708,7 +1654,6 @@ function playCard(card, target) {
     document.body.appendChild(ov);
 
     buildGridCells();
-
     duelCanvas = document.getElementById("duelCanvas");
     duelCtx    = duelCanvas.getContext("2d");
 
@@ -2127,18 +2072,40 @@ function playCard(card, target) {
   }
 
   function drawHighlights() {
-  if (!duelState) return;
+    if (!duelState) return;
+    const now = Date.now();
+    duelState.highlightCells.forEach(h => {
+      const { x, y } = cellToPx(h.r, h.c);
+      const pulse = 0.5 + 0.5 * Math.sin(now / 250);
+      const isFireball = h.color.includes("239,35,60") || h.color.includes("255,100,30");
 
-  duelState.highlightCells.forEach(h => {
-    const { x, y } = cellToPx(h.r, h.c);
-    const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 300);
-
-    duelCtx.beginPath();
-    duelCtx.arc(x, y, (CELL_SIZE / 2) - 4, 0, Math.PI * 2);
-    duelCtx.fillStyle = h.color.replace("0.45", (0.25 + pulse * 0.25).toFixed(2));
-    duelCtx.fill();
-  });
-}
+      if (isFireball) {
+        // Bold filled square highlight so fireball range is unmissable
+        const half = (CELL_SIZE / 2) - 2;
+        duelCtx.save();
+        duelCtx.globalAlpha = 0.35 + pulse * 0.25;
+        duelCtx.fillStyle = "#ef4444";
+        duelCtx.strokeStyle = "#ff6b00";
+        duelCtx.lineWidth = 3;
+        duelCtx.beginPath();
+        roundRect(duelCtx, x - half, y - half, half*2, half*2, 10);
+        duelCtx.fill();
+        duelCtx.stroke();
+        // Flame emoji hint
+        duelCtx.globalAlpha = 0.55 + pulse * 0.3;
+        duelCtx.font = "16px serif";
+        duelCtx.textAlign = "center"; duelCtx.textBaseline = "middle";
+        duelCtx.fillText("🔥", x, y);
+        duelCtx.restore();
+      } else {
+        // Normal highlight (move, attack)
+        duelCtx.beginPath();
+        duelCtx.arc(x, y, (CELL_SIZE / 2) - 4, 0, Math.PI * 2);
+        duelCtx.fillStyle = h.color.replace("0.45", (0.25 + pulse * 0.25).toFixed(2));
+        duelCtx.fill();
+      }
+    });
+  }
 
   function drawFloatingTexts(ts) {
     duelState.floatingTexts = duelState.floatingTexts.filter(ft => {
@@ -2319,26 +2286,19 @@ function playCard(card, target) {
     endTurnManual,
     pickWild,
     startDuel() {
-
-  const box = document.getElementById("duelInitBox");
-
-  if (box) {
-    box.style.display = "none";
-  }
-
-  enterPhase("pickCard");
-
-  // AI START FIX
-  consumeDuelItems();
-  if (duelState.turn !== duelState.humanFighterIndex) {
-
-    setStatus(`${duelState.fighters[duelState.turn].name} is thinking...`);
-
-    setTimeout(() => {
-      aiTakeTurn();
-    }, 900);
-  }
-},
+      const box = document.getElementById("duelInitBox");
+      if (box) box.style.display = "none";
+      consumeDuelItems();
+      enterPhase("pickCard");
+      const f = duelState.fighters[duelState.turn];
+      const isHuman = duelState.is2v2
+        ? f.teamIndex === (duelState.humanTeam ?? 0)
+        : duelState.turn === duelState.humanFighterIndex;
+      if (!isHuman) {
+        setStatus(`${f.name} is thinking…`);
+        setTimeout(() => aiTakeTurn(), 1000);
+      }
+    },
     closeDuel,
   };
 
