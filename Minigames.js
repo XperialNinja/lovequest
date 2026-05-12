@@ -1,4 +1,78 @@
 // ============================================================
+//  MINIGAME NETWORK LAYER  (netMG)
+//  Host runs all game logic.  Guest sends keys, receives state.
+//
+//  How it works:
+//   1. When a minigame starts the host sends { type:"mgStart", mode }
+//      so the guest opens the same minigame overlay.
+//   2. Guest sends { type:"mgKeys", keys:{...} } ~30x/sec.
+//   3. Host merges guest keys into its simulation for player 1.
+//   4. Host sends { type:"mgState", state } ~20x/sec with full positions.
+//   5. Guest renders from received state - no local physics.
+//   6. When done host sends { type:"mgEnd", rewards }.
+// ============================================================
+const netMG = {
+  guestKeys: {},
+
+  isHost()      { return typeof netRole==="undefined"||netRole==="host"||netRole===null; },
+  isGuest()     { return typeof netRole!=="undefined"&&netRole==="guest"; },
+  connected()   { return typeof netConn!=="undefined"&&netConn&&netConn.open; },
+
+  broadcastStart(mode) {
+    if(!this.connected()) return;
+    try{ netConn.send({type:"mgStart",mode}); }catch(e){}
+  },
+
+  _keyTimer:0,
+  sendKeys(keys) {
+    if(!this.connected()) return;
+    if(++this._keyTimer%2!==0) return;
+    try{ netConn.send({type:"mgKeys",keys:Object.assign({},keys)}); }catch(e){}
+  },
+
+  _stateTimer:0,
+  sendState(state) {
+    if(!this.connected()) return;
+    if(++this._stateTimer%3!==0) return;
+    try{ netConn.send({type:"mgState",state}); }catch(e){}
+  },
+
+  broadcastEnd(rewards) {
+    if(!this.connected()) return;
+    try{ netConn.send({type:"mgEnd",rewards}); }catch(e){}
+  },
+
+  _onState:null, _onEnd:null,
+  onState(cb){ this._onState=cb; },
+  onEnd(cb)  { this._onEnd=cb;   },
+
+  handleData(data) {
+    if(!data) return;
+    if(data.type==="mgKeys")              this.guestKeys=data.keys||{};
+    if(data.type==="mgState"&&this._onState) this._onState(data.state);
+    if(data.type==="mgEnd"  &&this._onEnd)   this._onEnd(data.rewards);
+  },
+
+  // Merge local (host) keys + remote (guest) keys.
+  // Guest keys map to virtual p1_ prefixed keys used for player[1] movement.
+  mergedKeys(localKeys) {
+    const m=Object.assign({},localKeys);
+    const g=this.guestKeys;
+    if(g["ArrowLeft"] ||g["a"]) m["p1_left"] =true;
+    if(g["ArrowRight"]||g["d"]) m["p1_right"]=true;
+    if(g["ArrowUp"]   ||g["w"]) m["p1_up"]   =true;
+    if(g["ArrowDown"] ||g["s"]) m["p1_down"] =true;
+    if(g[" "])                   m["p1_space"]=true;
+    return m;
+  },
+
+  reset() {
+    this.guestKeys={};this._onState=null;this._onEnd=null;
+    this._keyTimer=0;this._stateTimer=0;
+  },
+};
+
+// ============================================================
 //  LOVEQUEST – minigames.js  Alpha v2
 // ============================================================
 
@@ -115,6 +189,8 @@ const MG = {
     this.buildOverlay();
     const allModes=["FFA","FFA_DIG","DUOS","DUOS_RACE","1v3","1V3_TAG"];
     const chosen = this.pickMode();
+    // Tell guest which mode was chosen so they open the same game
+    if(typeof netMG!=="undefined"&&netMG.isHost()) netMG.broadcastStart(chosen);
     let spinT = 0, revealed = false;
     const spinDur = 2.4, W = window.innerWidth, H = window.innerHeight;
     let spinIdx = 0, spinSpeed = 22;
@@ -266,7 +342,7 @@ const MG = {
     const gPlayers = [0,1,2,3].map(i => ({
       idx:i, x:W*0.15+i*(W*0.7/3), y:ARENA_TOP+AH*0.5,
       alive:true, r:P_R,
-      isHuman:i===0,
+      isHuman:i===0||i===1,
       homeX:[W*0.15, W*0.28, W*0.72, W*0.85][i],
       homeY:[ARENA_TOP+AH*0.5, ARENA_TOP+AH*0.75, ARENA_TOP+AH*0.25, ARENA_TOP+AH*0.5][i],
       style:i,  // 1=sidestep, 2=flee, 3=juke
@@ -280,6 +356,17 @@ const MG = {
     const onKey=e=>{ keys[e.key]=e.type==="keydown"; };
     window.addEventListener("keydown",onKey);
     window.addEventListener("keyup",onKey);
+
+    // Guest: receive state from host and apply it
+    netMG.reset();
+    let guestState=null;
+    netMG.onState(st=>{ guestState=st; });
+    netMG.onEnd(rewards=>{
+      window.removeEventListener("keydown",onKey);
+      window.removeEventListener("keyup",onKey);
+      const ordered=[...rewards].sort((a,b)=>b.coins-a.coins).map(r=>r.playerIndex);
+      this.showResults("FFA",rewards,ordered);
+    });
 
     const spawnWave=()=>{
       waveCount++;
@@ -349,6 +436,14 @@ const MG = {
 
     this.startLoop((dt)=>{
       const c=this.ctx;
+      // GUEST: apply received state to local arrays then render normally
+      if(netMG.isGuest()&&netMG.connected()&&guestState){
+        netMG.sendKeys(keys);
+        guestState.players.forEach(sp=>{ const lp=gPlayers[sp.idx]; if(lp){lp.x=sp.x;lp.y=sp.y;lp.alive=sp.alive;} });
+        bullets.length=0; guestState.bullets.forEach(b=>bullets.push(b));
+        gameOver=guestState.gameOver; winner=guestState.winner;
+        elapsed=guestState.elapsed;
+      }
       c.clearRect(0,0,W,H);
       const bg=c.createLinearGradient(0,0,0,H);
       bg.addColorStop(0,"#080820"); bg.addColorStop(1,"#1a082a");
@@ -385,8 +480,12 @@ const MG = {
           if(b.x<-120||b.x>W+120||b.y<-120||b.y>H+120) bullets.splice(i,1);
         }
 
+        // Networked movement: host controls p0, guest keys control p1
+        const mk=netMG.isHost()?netMG.mergedKeys(keys):keys;
+        if(netMG.isGuest()&&netMG.connected()) netMG.sendKeys(keys);
+        // Player 0 (Lanlanland) moves locally on host screen
         const hp=gPlayers[0];
-        if(hp.alive){
+        if(hp.alive&&(netMG.isHost()||!netMG.connected())){
           let mx=0,my=0;
           if(keys["ArrowLeft"]||keys["a"])  mx=-1;
           if(keys["ArrowRight"]||keys["d"]) mx= 1;
@@ -395,6 +494,18 @@ const MG = {
           if(mx&&my){ mx*=0.707; my*=0.707; }
           hp.x=Math.max(P_R+10,Math.min(W-P_R-10, hp.x+mx*P_SPEED*dt));
           hp.y=Math.max(ARENA_TOP+P_R,Math.min(ARENA_BOT-P_R, hp.y+my*P_SPEED*dt));
+        }
+        // Player 1 (Merryberry) moved by guest keys, applied on host only
+        const hp1=gPlayers[1];
+        if(hp1.alive&&netMG.isHost()){
+          let mx=0,my=0;
+          if(mk["p1_left"])  mx=-1;
+          if(mk["p1_right"]) mx= 1;
+          if(mk["p1_up"])    my=-1;
+          if(mk["p1_down"]) my= 1;
+          if(mx&&my){ mx*=0.707; my*=0.707; }
+          hp1.x=Math.max(P_R+10,Math.min(W-P_R-10, hp1.x+mx*P_SPEED*dt));
+          hp1.y=Math.max(ARENA_TOP+P_R,Math.min(ARENA_BOT-P_R, hp1.y+my*P_SPEED*dt));
         }
 
         gPlayers.forEach(p=>{
@@ -427,6 +538,12 @@ const MG = {
           gameOver=true;
           if(alive.length===1){ finishOrder.push(alive[0].idx); winner=alive[0].idx; }
         }
+        // Host broadcasts full state to guest every few frames
+        if(netMG.isHost()) netMG.sendState({
+          players:gPlayers.map(p=>({x:p.x,y:p.y,alive:p.alive,idx:p.idx})),
+          bullets:bullets.map(b=>({x:b.x,y:b.y,vx:b.vx,vy:b.vy,r:b.r,hue:b.hue})),
+          gameOver, finishOrder, winner, elapsed,
+        });
       } else {
         goTimer+=dt;
         if(goTimer>3.5){
@@ -437,6 +554,7 @@ const MG = {
           const ordered=[...finishOrder].reverse();
           const prizes=[20,12,5,0];
           const rewards=ordered.map((pi,place)=>({playerIndex:pi,coins:prizes[place]||0}));
+          if(netMG.isHost()) netMG.broadcastEnd(rewards); // tell guest game is over
           this.showResults("FFA",rewards,ordered);
           return;
         }
@@ -641,6 +759,7 @@ const MG = {
           const rewards=aw
             ?[{playerIndex:0,coins:16},{playerIndex:1,coins:16},{playerIndex:2,coins:4},{playerIndex:3,coins:4}]
             :[{playerIndex:0,coins:4},{playerIndex:1,coins:4},{playerIndex:2,coins:16},{playerIndex:3,coins:16}];
+          if(netMG.isHost()) netMG.broadcastEnd(rewards);
           this.showResults("DUOS",rewards,aw?[0,1,2,3]:[2,3,0,1]);
           return;
         }
@@ -1036,6 +1155,7 @@ const MG = {
           const rewards=hw
             ?[...survivingHiders.map(i=>({playerIndex:i,coins:15})),{playerIndex:landIdx,coins:2}]
             :[{playerIndex:landIdx,coins:20},...hiderIdxs.map(i=>({playerIndex:i,coins:0}))];
+          if(netMG.isHost()) netMG.broadcastEnd(rewards);
           this.showResults("1v3",rewards,hw?[...survivingHiders,landIdx]:[landIdx,...hiderIdxs]);
         }
       }
@@ -1085,7 +1205,7 @@ const MG = {
     // Players: grid position in floats
     const gPlayers=[0,1,2,3].map(i=>({
       idx:i, cx:starts[i][0]*1.0, cy:starts[i][1]*1.0,
-      digTimer:0, isHuman:i===0, alive:true,
+      digTimer:0, isHuman:i===0||i===1, alive:true,
       dx:0, dy:0,
       // AI state — each has a different search personality, NO chest knowledge
       aiWander:{c:Math.floor(COLS/2)+Math.floor((Math.random()-0.5)*COLS*0.3),
@@ -1172,7 +1292,9 @@ const MG = {
       c.fillStyle="#1a0e08"; c.fillRect(0,0,W,H);
 
       if(!winner){
-        // Human input
+        // Human input (networked)
+        const mk=netMG.isHost()?netMG.mergedKeys(keys):keys;
+        if(netMG.isGuest()&&netMG.connected()) netMG.sendKeys(keys);
         const hp=gPlayers[0];
         let hm=0,hv=0;
         if(keys["a"]||keys["ArrowLeft"])  hm=-1;
@@ -1197,6 +1319,28 @@ const MG = {
         // Dig cell under player always if dirt
         digAt(hp,Math.round(hp.cx),Math.round(hp.cy));
 
+        // Player 1 (Merryberry) - controlled by guest keys received over network
+        if(netMG.isHost()){
+          const hp1=gPlayers[1];
+          if(!hp1.alive) goto_ai: ;
+          else {
+            let hm1=0,hv1=0;
+            if(mk["p1_left"])  hm1=-1;
+            if(mk["p1_right"]) hm1= 1;
+            if(mk["p1_up"])    hv1=-1;
+            if(mk["p1_down"]) hv1= 1;
+            if(hm1&&hv1){hm1*=0.707;hv1*=0.707;}
+            if(hm1||hv1){
+              hp1.digTimer+=dt;
+              const nx1=hp1.cx+hm1*P_SPEED*dt, ny1=hp1.cy+hv1*P_SPEED*dt;
+              const nc1=Math.round(nx1), nr1=Math.round(ny1);
+              if(nc1>=0&&nc1<COLS&&nr1>=0&&nr1<ROWS&&tiles[nr1][nc1]!==2){
+                if(tiles[nr1][nc1]===1) tiles[nr1][nc1]=0;
+                hp1.cx=nx1; hp1.cy=ny1;
+              }
+            }
+          }
+        }
         // AI players — one cell per DIG_RATE seconds, same as human. No free digs.
         gPlayers.forEach(p=>{
           if(p.isHuman||!p.alive) return;
@@ -1372,6 +1516,7 @@ const MG = {
           window.removeEventListener("keydown",onKey);
           window.removeEventListener("keyup",onKey);
           const rewards=[{playerIndex:winner.idx,coins:25},...[0,1,2,3].filter(i=>i!==winner.idx).map(i=>({playerIndex:i,coins:4}))];
+          if(netMG.isHost()) netMG.broadcastEnd(rewards);
           this.showResults("FFA_DIG",rewards,[winner.idx,...[0,1,2,3].filter(i=>i!==winner.idx)]);
         }
       }
@@ -1646,7 +1791,8 @@ const MG = {
             const rewards=winnerIsPlayer
               ?[{playerIndex:0,coins:16},{playerIndex:1,coins:16},{playerIndex:2,coins:4},{playerIndex:3,coins:4}]
               :[{playerIndex:0,coins:4},{playerIndex:1,coins:4},{playerIndex:2,coins:16},{playerIndex:3,coins:16}];
-            this.showResults("DUOS_RACE",rewards,winnerIsPlayer?[0,1,2,3]:[2,3,0,1]);
+            if(netMG.isHost()) netMG.broadcastEnd(rewards);
+          this.showResults("DUOS_RACE",rewards,winnerIsPlayer?[0,1,2,3]:[2,3,0,1]);
             return;
           }
         }
@@ -2054,6 +2200,7 @@ const MG = {
           const rewards=rw
             ?[{playerIndex:runnerIdx,coins:22},{playerIndex:hunterIdxs[0],coins:3},{playerIndex:hunterIdxs[1],coins:3},{playerIndex:hunterIdxs[2],coins:3}]
             :[{playerIndex:runnerIdx,coins:0},{playerIndex:hunterIdxs[0],coins:14},{playerIndex:hunterIdxs[1],coins:14},{playerIndex:hunterIdxs[2],coins:14}];
+          if(netMG.isHost()) netMG.broadcastEnd(rewards);
           this.showResults("1V3_TAG",rewards,rw?[runnerIdx,...hunterIdxs]:[...hunterIdxs,runnerIdx]);
         }
       }
@@ -2065,6 +2212,13 @@ const MG = {
   // ═══════════════════════════════════════════════════════════
   showResults(mode, rewards, order) {
     this.stopLoop();
+    // Track minigame win for the 1st place player
+    if (typeof players !== "undefined" && order && order.length > 0) {
+      const winnerIdx = order[0];
+      if (players[winnerIdx] && players[winnerIdx].stats) {
+        players[winnerIdx].stats.minigamesWon++;
+      }
+    }
     const W=window.innerWidth, H=window.innerHeight, c=this.ctx;
 
     const draw=()=>{
