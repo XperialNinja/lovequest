@@ -3,7 +3,6 @@
 //  Full grid-based card duel system
 //  Called from game.js: triggerDuel(landingPlayer, allPlayers, onDuelComplete)
 // ============================================================
-
 const DUEL = (() => {
 
   // ── GRID CONFIG ─────────────────────────────────────────────
