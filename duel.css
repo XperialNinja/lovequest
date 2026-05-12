@@ -2,7 +2,6 @@
    LOVEQUEST  –  duel.css
    Grid-based card duel system styles — Forest Battlefield
    ============================================================ */
-
 /* ── OVERLAY ─────────────────────────────────────────────────── */
 #duelOverlay {
   position: fixed; inset: 0; z-index: 500;
