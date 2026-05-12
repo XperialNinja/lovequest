@@ -245,17 +245,16 @@
   box-shadow: inset 0 0 40px rgba(0,0,0,0.5);
 }
 
-/* ── GRID CELLS — vivid pink tiles on forest ground ─────────── */
+/* ── GRID CELLS — pink stone tiles on forest ground ─────────── */
 .dcell {
-  background: rgba(255, 80, 160, 0.22);
-  border: 2px solid rgba(255, 110, 185, 0.70);
+  background: rgba(255, 100, 170, 0.13);
+  border: 2px solid rgba(255, 110, 175, 0.48);
   border-radius: 12px;
   cursor: default;
   transition: background .15s, border-color .15s, box-shadow .15s;
   box-shadow:
-    inset 0 0 18px rgba(255, 60, 150, 0.18),
-    inset 0 1px 0   rgba(255,210,235,0.20),
-    0 2px 8px rgba(200,40,120,0.15);
+    inset 0 0 14px rgba(255, 80, 160, 0.09),
+    inset 0 1px 0   rgba(255,200,230,0.12);
 }
 .dcell.hole {
   background: transparent;
@@ -285,12 +284,11 @@
   position: fixed; inset: 0; z-index: 550;
   display: flex; align-items: center; justify-content: center;
   background:
-    radial-gradient(ellipse at 40% 30%, rgba(199,125,255,0.18) 0%, transparent 55%),
-    radial-gradient(ellipse at 60% 70%, rgba(255,107,157,0.15) 0%, transparent 55%),
+    radial-gradient(ellipse at 40% 30%, rgba(199,125,255,0.20) 0%, transparent 55%),
+    radial-gradient(ellipse at 60% 70%, rgba(255,107,157,0.16) 0%, transparent 55%),
     linear-gradient(160deg, #07030f 0%, #120820 50%, #07030f 100%);
   animation: duelFadeIn .3s ease-out;
 }
-
 .sw-backdrop {
   display: flex; flex-direction: column; align-items: center; gap: 16px;
   padding: 40px 50px;
@@ -299,92 +297,102 @@
   border-radius: 32px;
   backdrop-filter: blur(16px);
   box-shadow: 0 30px 80px rgba(0,0,0,0.6);
-  animation: popIn .35s cubic-bezier(.34,1.56,.64,1);
+  animation: popInWheel .35s cubic-bezier(.34,1.56,.64,1);
 }
-@keyframes popIn {
+@keyframes popInWheel {
   from { transform: scale(0.6); opacity: 0; }
   to   { transform: scale(1);   opacity: 1; }
 }
-
 .sw-title {
-  font-family: 'Fredoka One', cursive; font-size: 38px;
+  font-family: 'Fredoka One', cursive; font-size: 36px;
   background: linear-gradient(135deg, #ff6b9d, #c77dff, #4cc9f0);
   -webkit-background-clip: text; -webkit-text-fill-color: transparent;
   background-clip: text;
 }
-
 .sw-subtitle {
-  font-family: 'Fredoka One', cursive; font-size: 16px;
-  color: rgba(255,255,255,0.5); margin-top: -8px;
+  font-family: 'Fredoka One', cursive; font-size: 15px;
+  color: rgba(255,255,255,0.48); margin-top: -8px;
 }
-
 .sw-wheel-wrap {
   position: relative;
   display: flex; align-items: center; justify-content: center;
 }
-
 .sw-pointer {
   position: absolute; top: -22px; left: 50%;
   transform: translateX(-50%);
   font-size: 26px; color: #ffd60a;
   filter: drop-shadow(0 2px 8px rgba(255,214,10,0.7));
   z-index: 10;
-  animation: pointerPulse 1s ease-in-out infinite alternate;
+  animation: ptrBob 0.9s ease-in-out infinite alternate;
 }
-@keyframes pointerPulse {
+@keyframes ptrBob {
   from { transform: translateX(-50%) translateY(0); }
-  to   { transform: translateX(-50%) translateY(-4px); }
+  to   { transform: translateX(-50%) translateY(-5px); }
 }
-
 #swCanvas {
   border-radius: 50%;
-  box-shadow:
-    0 0 0 4px rgba(255,255,255,0.15),
-    0 0 40px rgba(199,125,255,0.35),
-    0 12px 40px rgba(0,0,0,0.5);
+  box-shadow: 0 0 0 4px rgba(255,255,255,0.15),
+    0 0 40px rgba(199,125,255,0.40), 0 12px 40px rgba(0,0,0,0.5);
 }
-
 .sw-center-dot {
   position: absolute; top:50%; left:50%;
   transform: translate(-50%,-50%);
   width: 22px; height: 22px; border-radius: 50%;
-  background: white;
-  box-shadow: 0 0 12px rgba(255,255,255,0.6);
+  background: white; box-shadow: 0 0 12px rgba(255,255,255,0.6);
   pointer-events: none;
 }
-
 .sw-result-text {
   font-family: 'Fredoka One', cursive; font-size: 30px;
   color: #ffd60a;
   text-shadow: 0 0 20px rgba(255,214,10,0.6);
   transition: opacity .3s, transform .2s;
-  min-height: 38px;
+  min-height: 40px; text-align: center;
 }
 
-.sw-spin-btn {
-  font-family: 'Fredoka One', cursive; font-size: 20px;
-  padding: 14px 46px; border: none; border-radius: 50px; cursor: pointer;
-  background: linear-gradient(135deg, #c77dff, #ff6b9d);
-  color: white; box-shadow: 0 6px 28px rgba(199,125,255,0.5);
-  transition: transform .15s, box-shadow .15s;
+/* ── HP BAR TEAM DIVIDER ─────────────────────────────────────── */
+.dhp-divider {
+  font-family: 'Fredoka One', cursive; font-size: 18px;
+  color: rgba(255,255,255,0.25);
+  display: flex; align-items: center;
+  padding: 0 8px; flex-shrink: 0;
 }
-.sw-spin-btn:hover { transform: translateY(-2px); box-shadow: 0 10px 36px rgba(199,125,255,0.7); }
-.sw-spin-btn:active { transform: scale(.93); }
 
-/* ── BET BADGE on roll reveal ────────────────────────────────── */
+/* ── SIDE PANEL UPDATES FOR MULTI-FIGHTER ────────────────────── */
+.dsp-team-label {
+  font-family: 'Fredoka One', cursive; font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.8px;
+  color: rgba(255,255,255,0.35);
+  text-align: center;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  padding-bottom: 6px; margin-bottom: 4px;
+}
+.dsp-fighter-block {
+  margin-bottom: 8px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.dsp-fighter-block:last-child { border-bottom: none; margin-bottom: 0; }
+
+/* ── BET BADGE ───────────────────────────────────────────────── */
 .di-bet-badge {
   font-family: 'Fredoka One', cursive; font-size: 22px;
   color: #ffd60a;
   background: rgba(255,214,10,0.12);
   border: 2px solid rgba(255,214,10,0.35);
-  border-radius: 20px; padding: 8px 24px;
-  margin-bottom: 6px;
-  animation: betBadgePop .5s .2s cubic-bezier(.34,1.56,.64,1) both;
+  border-radius: 20px; padding: 8px 24px; margin-bottom: 6px;
+  animation: betPop .5s .2s cubic-bezier(.34,1.56,.64,1) both;
 }
-@keyframes betBadgePop {
+@keyframes betPop {
   from { transform: scale(0.5); opacity: 0; }
   to   { transform: scale(1);   opacity: 1; }
 }
+
+/* ── 2v2 ROLL REVEAL TEAM COLUMNS ────────────────────────────── */
+.di-team {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+}
+
+/* ── CARD DISABLED ───────────────────────────────────────────── */
 .dcard-disabled {
   opacity: 0.35;
   cursor: not-allowed !important;
