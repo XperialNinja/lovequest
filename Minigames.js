@@ -1,7 +1,6 @@
 // ============================================================
 //  MINIGAME NETWORK LAYER  (netMG)
 //  Host runs all game logic.  Guest sends keys, receives state.
-//
 //  How it works:
 //   1. When a minigame starts the host sends { type:"mgStart", mode }
 //      so the guest opens the same minigame overlay.
