@@ -361,6 +361,21 @@ function makePlayer(idx, cfg, startNode) {
     bounceT: Math.random() * Math.PI * 2,
     _afterMove: null,
     inventory: [],  // board items
+    stats: {
+      spacesLanded:   0,  // total spaces moved onto
+      redLanded:      0,  // times landed on red
+      blueLanded:     0,  // times landed on blue
+      heartLanded:    0,  // times landed on heart
+      eventLanded:    0,  // times landed on event
+      duelLanded:     0,  // times landed on duel
+      minigamesWon:   0,  // minigame 1st place finishes
+      duelsWon:       0,  // duels won
+      coinsEarned:    0,  // total coins ever gained
+      coinsSpent:     0,  // total coins ever spent
+      starsFromBonus: 0,  // bonus category stars earned at end
+      itemsBought:    0,  // shop purchases
+      starsPassed:    0,  // times walked past the star
+    },
     duelInventory: [], // duel shop items
     bonusMaxHp: 0,  // permanent HP bonus from Iron Body
     pendingBoost: 0,         // +N to next roll
@@ -442,6 +457,7 @@ function tickMove(p, dt) {
     p.nodeId = p.movePath[p.moveIndex];
     p.moveIndex++;
     p.bounceT = Math.PI / 2;
+    if (p.stats) p.stats.spacesLanded++;
     focusOnCurrentPlayer();
   } else {
     p.x += (dx/dist)*step;
@@ -626,6 +642,9 @@ function chooseFork(chosenId) {
   const n = NODE_MAP[chosenId];
   player.nodeId = chosenId; player.x = n.x; player.y = n.y;
 
+  // Tell the other screen which path was chosen
+  netBroadcast({ type:"fork", playerIndex: player.index, chosenId, stepsRemaining });
+
   if (stepsRemaining - 1 > 0) {
     buildAndMove(player, stepsRemaining - 1);
   } else {
@@ -639,9 +658,28 @@ function chooseFork(chosenId) {
 // ─────────────────────────────────────────────────────────────
 function showStarOfferUI() {
   if (!pendingStarOffer) return;
+  const { player, stepsRemaining } = pendingStarOffer;
+  const isAI = player.index >= 2;
+
+  // AI decides automatically — no popup shown
+  if (isAI) {
+    const bought = player.coins >= CONFIG.game.starCost;
+    if (bought) {
+      player.coins -= CONFIG.game.starCost;
+      player.stars++;
+      updateHUD();
+      relocateStar();
+      spawnFloat(player, "⭐ Star!", "#ffd60a");
+    }
+    pendingStarOffer = null;
+    if (stepsRemaining > 0) buildAndMove(player, stepsRemaining);
+    else { turnPhase = "landing"; handleLanding(player); }
+    return;
+  }
+
+  // Human — show the choice popup
   turnPhase = "starOffer";
-  const { player } = pendingStarOffer;
-  const canAfford  = player.coins >= CONFIG.game.starCost;
+  const canAfford = player.coins >= CONFIG.game.starCost;
 
   showChoicePopup(
     "⭐",
@@ -651,16 +689,17 @@ function showStarOfferUI() {
     "Keep Going →",
     bought => {
       if (bought) {
+        if (player.stats) { player.stats.coinsSpent += CONFIG.game.starCost; player.stats.starsPassed++; }
         player.coins -= CONFIG.game.starCost;
         player.stars++;
         updateHUD();
         relocateStar();
         showToast("⭐ Star bought! Watch it fly to a new spot!", 3000);
       }
-      const { stepsRemaining } = pendingStarOffer;
+      const { stepsRemaining: rem } = pendingStarOffer;
       pendingStarOffer = null;
-      if (stepsRemaining > 0) buildAndMove(player, stepsRemaining);
-      else { turnPhase="landing"; handleLanding(player); }
+      if (rem > 0) buildAndMove(player, rem);
+      else { turnPhase = "landing"; handleLanding(player); }
     }
   );
 }
@@ -677,10 +716,13 @@ function relocateStar() {
   const pool = STAR_CANDIDATES.filter(id => !occupied.has(id));
   const newId = pool[Math.floor(Math.random() * pool.length)] ?? STAR_CANDIDATES[0];
   starNodeId = newId;
-  boardDirty = true;   // rebuild board cache with new star position
+  boardDirty = true;
 
   const newN = NODE_MAP[newId];
   starAnim = { fromX, fromY, toX: newN.x, toY: newN.y, t:0, duration:1.8 };
+
+  // Tell other screen: play the same star fly animation
+  netBroadcast({ type:"starMove", fromX, fromY, toX: newN.x, toY: newN.y, newId });
 
   zoomOut();
   setTimeout(() => {
@@ -717,6 +759,7 @@ function rollDice() {
     p.pendingBoost = 0;
     animateDoubleDice(r1, r2, boost, () => {
       showToast(`🎲🎲 ${r1} + ${r2}${boost?` + ${boost}(boost)`:""}= ${result}! Moving…`, 3000);
+      netBroadcast({ type:"roll", playerIndex: currentPlayerIndex, result });
       buildAndMove(p, result);
     });
   } else {
@@ -730,6 +773,8 @@ function rollDice() {
       document.getElementById("diceValue").textContent = result;
       const msg = hadBoost ? `🚀 ${base} + ${boost}(boost) = ${result}! Moving…` : `🎲 Rolled a ${result}! Moving…`;
       showToast(msg, 2000);
+      // Tell the other screen: animate dice + start moving this player
+      netBroadcast({ type:"roll", playerIndex: currentPlayerIndex, result });
       buildAndMove(p, result);
     });
   }
@@ -924,16 +969,21 @@ function handleLanding(player) {
   const onStar = player.nodeId === starNodeId;
   const type   = onStar ? "starLand" : node.type;
   const cfg    = CONFIG.spaceColors[node.type] || CONFIG.spaceColors.blue;
+
+  // Tell the other screen which space was landed on so they see the popup context
+  netBroadcast({ type:"landing", playerIndex: player.index, spaceType: type, nodeId: player.nodeId });
   const isAI   = player.index >= 2;
 
   setTimeout(() => {
     switch (type) {
       case "blue":
         player.coins += 3;
+        if (player.stats) { player.stats.blueLanded++; player.stats.coinsEarned += 3; }
         spawnFloat(player, "+3 💰", "#4cc9f0");
         updateHUD(); endTurn(); break;
 
       case "red":
+        if (player.stats) player.stats.redLanded++;
         player.coins = Math.max(0, player.coins - 3);
         spawnFloat(player, "-3 💰", "#ef233c");
         updateHUD(); endTurn(); break;
@@ -946,6 +996,7 @@ function handleLanding(player) {
       case "starLand":
         if (player.coins >= CONFIG.game.starCost) {
           player.coins -= CONFIG.game.starCost; player.stars++;
+          if (player.stats) player.stats.coinsSpent += CONFIG.game.starCost;
           updateHUD(); relocateStar();
           if (isAI) { spawnFloat(player, "⭐ Star!", "#ffd60a"); setTimeout(endTurn, 1200); }
           else showSpacePopup("⭐", `Star purchased!\n(-${CONFIG.game.starCost} coins)`, "#ffd60a", endTurn);
@@ -955,9 +1006,11 @@ function handleLanding(player) {
         } break;
 
       case "event":
+        if (player.stats) player.stats.eventLanded++;
         triggerLoveEvent(player, endTurn); break;
 
       case "duel":
+        if (player.stats) player.stats.duelLanded++;
         showSpacePopup("⚔️", "Duel Space!\nPrepare to fight…", "#f4845f", () => {
           triggerDuel(player, players, endTurn);
         }); break;
@@ -975,11 +1028,21 @@ function handleLanding(player) {
         break;
 
       case "start":
+        if (player.stats) player.stats.coinsEarned += 5;
         player.coins += 5;
         spawnFloat(player, "+5 💰 START!", "#06d6a0");
         updateHUD();
         if (isAI) setTimeout(endTurn, 800);
         else showSpacePopup("🏠", "Passed START!\n+5 bonus coins 🎉", "#06d6a0", endTurn);
+        break;
+
+      case "heart":
+        if (player.stats) player.stats.heartLanded++;
+        player.stars++;
+        spawnFloat(player, "+1 ⭐", "#ff6b9d");
+        updateHUD();
+        if (isAI) setTimeout(endTurn, 800);
+        else showSpacePopup("💖", "+1 Star!\nLove is in the air!", "#ff6b9d", endTurn);
         break;
 
       default:
@@ -989,12 +1052,227 @@ function handleLanding(player) {
   }, 400);
 }
 
+// ── LOVE EVENT WHEEL ─────────────────────────────────────────
+const WHEEL_SEGMENTS = [
+  { coins: 5,  color: "#ff85b3" },
+  { coins: 12, color: "#d4006e" },
+  { coins: 8,  color: "#ffb3d1" },
+  { coins: 20, color: "#c2005c" },
+  { coins: 6,  color: "#ff6b9d" },
+  { coins: 15, color: "#e91e8c" },
+  { coins: 3,  color: "#ff9dc9" },
+  { coins: 10, color: "#ff4da6" },
+];
+
+function drawWheel(canvas, rotation) {
+  const c = canvas.getContext("2d");
+  const cx = canvas.width / 2, cy = canvas.height / 2;
+  const R = cx - 14;
+  const n = WHEEL_SEGMENTS.length;
+  const segAngle = (2 * Math.PI) / n;
+  c.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Outer glow ring
+  const glow = c.createRadialGradient(cx, cy, R - 4, cx, cy, R + 10);
+  glow.addColorStop(0, "rgba(255,107,157,0.55)");
+  glow.addColorStop(1, "rgba(255,107,157,0)");
+  c.beginPath(); c.arc(cx, cy, R + 10, 0, Math.PI * 2);
+  c.fillStyle = glow; c.fill();
+
+  WHEEL_SEGMENTS.forEach((seg, i) => {
+    const start = -Math.PI / 2 + i * segAngle + rotation;
+    const end   = start + segAngle;
+    c.beginPath(); c.moveTo(cx, cy);
+    c.arc(cx, cy, R, start, end); c.closePath();
+    c.fillStyle = seg.color; c.fill();
+    c.strokeStyle = "rgba(255,255,255,0.28)"; c.lineWidth = 2; c.stroke();
+
+    // Label
+    const mid = start + segAngle / 2;
+    const tx = cx + Math.cos(mid) * R * 0.64;
+    const ty = cy + Math.sin(mid) * R * 0.64;
+    c.save(); c.translate(tx, ty);
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.font = "bold 13px 'Fredoka One', cursive, sans-serif";
+    c.shadowColor = "rgba(0,0,0,0.65)"; c.shadowBlur = 4;
+    c.fillStyle = "white";
+    c.fillText(`${seg.coins} 💰`, 0, 0);
+    c.restore();
+  });
+
+  // Centre cap
+  c.beginPath(); c.arc(cx, cy, 22, 0, Math.PI * 2);
+  const cap = c.createRadialGradient(cx, cy, 0, cx, cy, 22);
+  cap.addColorStop(0, "#fff"); cap.addColorStop(1, "#ffb3d1");
+  c.fillStyle = cap; c.fill();
+  c.font = "17px serif"; c.textAlign = "center"; c.textBaseline = "middle";
+  c.shadowBlur = 0; c.fillText("💕", cx, cy);
+}
+
+function spinWheel(canvas, winSegIdx, onDone) {
+  const segAngle = (2 * Math.PI) / WHEEL_SEGMENTS.length;
+  // Rotate so winning segment lands under the top pointer
+  const finalRotation = 2 * Math.PI * 6 - (winSegIdx + 0.5) * segAngle;
+  const duration = 3600;
+  const startTime = performance.now();
+  function animate(now) {
+    const t = Math.min((now - startTime) / duration, 1);
+    const eased = 1 - Math.pow(1 - t, 3.5);
+    drawWheel(canvas, finalRotation * eased);
+    if (t < 1) { requestAnimationFrame(animate); }
+    else { drawWheel(canvas, finalRotation); onDone(WHEEL_SEGMENTS[winSegIdx].coins); }
+  }
+  requestAnimationFrame(animate);
+}
+
+function showLoveEventWheel(messageHtml, onResult) {
+  const winSegIdx  = Math.floor(Math.random() * WHEEL_SEGMENTS.length);
+  const overlay    = document.getElementById("wheelOverlay");
+  const msgEl      = document.getElementById("wheelMessage");
+  const resultEl   = document.getElementById("wheelResult");
+  const spinBtn    = document.getElementById("wheelSpinBtn");
+  const collectBtn = document.getElementById("wheelCollectBtn");
+  const wCanvas    = document.getElementById("wheelCanvas");
+
+  msgEl.innerHTML        = messageHtml;
+  resultEl.style.display = "none";
+  resultEl.textContent   = "";
+  spinBtn.style.display  = "inline-block";
+  spinBtn.disabled       = false;
+  spinBtn.style.opacity  = "1";
+  collectBtn.style.display = "none";
+  overlay.style.display  = "flex";
+  drawWheel(wCanvas, 0);
+
+  let hasSpun = false;
+  spinBtn.onclick = () => {
+    if (hasSpun) return;
+    hasSpun = true;
+    spinBtn.disabled = true; spinBtn.style.opacity = "0.45";
+    spinWheel(wCanvas, winSegIdx, (coins) => {
+      resultEl.textContent     = `🎉 ${coins} coins!`;
+      resultEl.style.display   = "block";
+      collectBtn.style.display = "inline-block";
+    });
+  };
+  collectBtn.onclick = () => {
+    overlay.style.display = "none";
+    onResult(WHEEL_SEGMENTS[winSegIdx].coins);
+  };
+}
+
+// ── FULL BOARD TELEPORT (event reward for Her) ────────────────
+function activateFullBoardTeleportMode(player) {
+  const eligible = BOARD_NODES.filter(n => n.id !== player.nodeId).map(n => n.id);
+  teleportMode = { player, eligible };
+  turnPhase = "teleport";
+  canvas.classList.add("fork-mode");
+  document.getElementById("btnRoll").disabled = true;
+  showToast("🌍 The whole board is yours! Click any space to teleport there! ✨", 99999);
+  zoomOut();
+}
+
+// ── 7 HER-SPECIFIC LOVE EVENTS ───────────────────────────────
 function triggerLoveEvent(player, cb) {
-  const ev = CONFIG.loveEvents[Math.floor(Math.random()*CONFIG.loveEvents.length)];
-  player.coins = Math.max(0, player.coins + ev.coins);
-  updateHUD();
-  const extra = ev.coins > 0 ? `\n+${ev.coins} coins` : ev.coins < 0 ? `\n${ev.coins} coins` : "";
-  showSpacePopup("💌", ev.text + extra, "#c77dff", cb);
+  const her  = players[1];  // always Her
+  const me   = players[0];  // always Me
+  const evIdx = Math.floor(Math.random() * 7);
+
+  switch (evIdx) {
+
+    case 0: // Sweet message → Her gets wheel coins
+      showLoveEventWheel(
+        `💌 <b>You are my sunshine, my everything.</b><br><br>Every single day I fall more in love with you than the day before. You make the whole world brighter just by being in it. This one's all for you, my love 💜`,
+        (coins) => { her.coins += coins; updateHUD(); cb(); }
+      );
+      break;
+
+    case 1: // Everything I have is hers → I give Her my coins
+      showLoveEventWheel(
+        `💕 <b>Everything I have is yours — always has been.</b><br><br>My heart, my soul, my love… and yes, even my coins. Take them all, you deserve every single one 🎁`,
+        (coins) => {
+          const give = Math.min(me.coins, coins);
+          me.coins -= give; her.coins += give;
+          updateHUD(); cb();
+        }
+      );
+      break;
+
+    case 2: // Free random board item for Her
+      {
+        const keys = Object.keys(CONFIG.shopItems);
+        const key  = keys[Math.floor(Math.random() * keys.length)];
+        const item = CONFIG.shopItems[key];
+        her.inventory.push(key);
+        updateHUD();
+        showSpacePopup(item.icon,
+          `🌸 I love every adventure we go on together.
+
+You deserve the world and so much more — here's a little gift, no strings attached!
+
+${item.icon} ${item.name} added to your items! 💜`,
+          "#ff6b9d", cb);
+      }
+      break;
+
+    case 3: // Sharing is caring → wheel coins split
+      showLoveEventWheel(
+        `💞 <b>Together is my favourite place in the whole universe.</b><br><br>Sharing is caring — let's split this lucky spin right down the middle, just like everything else we do together 🌸`,
+        (coins) => {
+          const herShare = Math.ceil(coins / 2);
+          const myShare  = Math.floor(coins / 2);
+          her.coins += herShare; me.coins += myShare;
+          updateHUD();
+          showSpacePopup("💞",
+            `Split! You get ${herShare} 💰 and I get ${myShare} 💰
+
+Sharing everything with you is my favourite thing 🌸`,
+            "#ff6b9d", cb);
+        }
+      );
+      break;
+
+    case 4: // 14 months → random duel item for Her
+      {
+        const keys = Object.keys(CONFIG.duelShopItems);
+        const key  = keys[Math.floor(Math.random() * keys.length)];
+        const item = CONFIG.duelShopItems[key];
+        if (!her.duelInventory) her.duelInventory = [];
+        her.duelInventory.push(key);
+        updateHUD();
+        showSpacePopup("⚔️",
+          `🎉 14 months of magic, laughter, and love!
+
+Every single moment with you has been a treasure I hold close to my heart. Happy anniversary, my love.
+
+${item.icon} ${item.name} added to your duel items! 💜`,
+          "#c77dff", cb);
+      }
+      break;
+
+    case 5: // Star of my life → Her gets +1 star
+      her.stars = (her.stars || 0) + 1;
+      updateHUD();
+      showSpacePopup("🌟",
+        `You are the star of my life — literally and always ⭐
+
+You shine brighter than anything in this entire universe and I am so endlessly proud of everything you are.
+
++1 Star just for being the most amazing you 💜`,
+        "#ffd60a", cb);
+      break;
+
+    case 6: // My whole world → full board teleport for Her
+      showSpacePopup("🌍",
+        `You are my whole entire world 💜
+
+I would follow you anywhere, anytime, without a single second thought. Go wherever your heart desires — the whole board belongs to you! ✨`,
+        "#c77dff", () => {
+          // Don't call cb here — handleLanding → endTurn handles it after teleport
+          activateFullBoardTeleportMode(her);
+        });
+      break;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -1010,9 +1288,10 @@ function spawnFloat(player, text, color) {
 
 // Called from render loop
 function drawFloatingTexts() {
+  const dt = Math.min(1/30, 1/60); // safe fixed step for float animation
   floatingTexts = floatingTexts.filter(f => f.t < f.life);
   floatingTexts.forEach(f => {
-    f.t += 0.016;
+    f.t += dt;
     const alpha = Math.max(0, 1 - f.t / f.life);
     const y = f.y - f.t * 60;
     ctx.save();
@@ -1054,10 +1333,12 @@ function endTurn() {
   const isHuman = currentPlayerIndex === 0 || currentPlayerIndex === 1;
 
   if (isHuman) {
-    // Sync turn to remote player 2 if multiplayer active
+    // Sync full state + camera to remote screen
     netSendTurn();
     showToast(`🎲 ${cur.name}'s turn! Roll the dice.`, 2000);
   } else {
+    // Broadcast that AI turn is starting so other screen follows camera
+    netBroadcast({ type:"aiTurnStart", playerIndex: currentPlayerIndex });
     // AI plays automatically after a short pause
     setTimeout(() => aiTakeTurn(cur), 900);
   }
@@ -1082,6 +1363,8 @@ function aiTakeTurn(player) {
 
     animateDice(result, () => {
       document.getElementById("diceValue").textContent = result;
+      // Broadcast AI roll so the other screen also sees the AI move
+      netBroadcast({ type:"aiRoll", playerIndex: player.index, result });
       buildAndMove(player, result);
     });
   }, 800);
@@ -1134,7 +1417,8 @@ function aiBuyItem(player) {
   if (affordable.length === 0) return;
   const pick = affordable[Math.floor(Math.random() * affordable.length)];
   player.coins -= pick.cost;
-  addToInventory(player, pick.id);
+  player.inventory.push(pick.id);
+  if (player.stats) { player.stats.itemsBought++; player.stats.coinsSpent += pick.cost; }
   updateHUD();
   showToast(`🛍️ ${player.name} bought ${pick.name}!`, 1500);
 }
@@ -1142,25 +1426,596 @@ function aiBuyItem(player) {
 // ─────────────────────────────────────────────────────────────
 //  GAME OVER
 // ─────────────────────────────────────────────────────────────
-function showGameOver() {
-  const sorted = [...players].sort((a,b) => b.stars - a.stars || b.coins - a.coins);
-  const winner = sorted[0];
-  const overlay = document.createElement("div");
-  overlay.style.cssText = `position:fixed;inset:0;z-index:999;background:rgba(0,0,0,0.85);
-    display:flex;flex-direction:column;align-items:center;justify-content:center;
-    font-family:'Fredoka One',cursive;color:white;`;
-  overlay.innerHTML = `
-    <div style="font-size:48px;margin-bottom:12px">🏆 GAME OVER!</div>
-    <div style="font-size:28px;color:${winner.color};margin-bottom:24px">${winner.name} wins!</div>
-    <div style="font-size:16px;opacity:.7;margin-bottom:32px">
-      ${sorted.map((p,i)=>`${["🥇","🥈","🥉","🏅"][i]} ${p.name}: ${p.stars}⭐ ${p.coins}💰`).join("<br>")}
-    </div>
-    <button onclick="location.reload()" style="padding:14px 40px;font-size:20px;font-family:'Fredoka One',cursive;
-      background:linear-gradient(135deg,#ff6b9d,#c77dff);border:none;border-radius:30px;color:white;cursor:pointer;">
-      Play Again 🎲
-    </button>`;
-  document.body.appendChild(overlay);
+// ─────────────────────────────────────────────────────────────
+//  GAME OVER  –  Full animated ceremony
+//  Phase 1: Curtain + "After 14 months…" title
+//  Phase 2: Bonus category reveals (3 random, one at a time)
+//           Each category winner gets +1 star with animation
+//  Phase 3: Podium — 4th→3rd→2nd→1st revealed with spotlights
+//  Phase 4: Champion reveal with confetti explosion
+// ─────────────────────────────────────────────────────────────
+
+// All possible bonus categories — 3 chosen at random each game
+const BONUS_CATEGORIES = [
+  {
+    id:"spacesLanded",
+    label:"World Traveller",
+    desc:"Most spaces travelled",
+    icon:"🗺️",
+    color:"#4cc9f0",
+    get:(p)=>p.stats.spacesLanded,
+    fmt:(v)=>`${v} spaces`,
+  },
+  {
+    id:"redLanded",
+    label:"Danger Seeker",
+    desc:"Most red spaces landed on",
+    icon:"💸",
+    color:"#ef233c",
+    get:(p)=>p.stats.redLanded,
+    fmt:(v)=>`${v} red spaces`,
+    leastWins:false,
+  },
+  {
+    id:"redLandedLeast",
+    label:"Lucky Feet",
+    desc:"Fewest red spaces landed on",
+    icon:"🍀",
+    color:"#06d6a0",
+    get:(p)=>-p.stats.redLanded, // negate: highest = least
+    fmt:(p)=>`only ${Math.abs(p)} reds`,
+  },
+  {
+    id:"heartLanded",
+    label:"Most Loving",
+    desc:"Most heart spaces landed on",
+    icon:"💖",
+    color:"#ff6b9d",
+    get:(p)=>p.stats.heartLanded,
+    fmt:(v)=>`${v} hearts`,
+  },
+  {
+    id:"blueLanded",
+    label:"Money Maker",
+    desc:"Most blue coin spaces landed on",
+    icon:"💰",
+    color:"#4cc9f0",
+    get:(p)=>p.stats.blueLanded,
+    fmt:(v)=>`${v} blue spaces`,
+  },
+  {
+    id:"eventLanded",
+    label:"Love Story",
+    desc:"Most Love Event spaces landed on",
+    icon:"💌",
+    color:"#c77dff",
+    get:(p)=>p.stats.eventLanded,
+    fmt:(v)=>`${v} events`,
+  },
+  {
+    id:"duelLanded",
+    label:"Fighter",
+    desc:"Most duel spaces landed on",
+    icon:"⚔️",
+    color:"#f4845f",
+    get:(p)=>p.stats.duelLanded,
+    fmt:(v)=>`${v} duels`,
+  },
+  {
+    id:"minigamesWon",
+    label:"Minigame Master",
+    desc:"Most minigames won",
+    icon:"🎮",
+    color:"#a855f7",
+    get:(p)=>p.stats.minigamesWon,
+    fmt:(v)=>`${v} wins`,
+  },
+  {
+    id:"duelsWon",
+    label:"Duel Champion",
+    desc:"Most duels won",
+    icon:"🏆",
+    color:"#ffd60a",
+    get:(p)=>p.stats.duelsWon,
+    fmt:(v)=>`${v} duels won`,
+  },
+  {
+    id:"coinsEarned",
+    label:"Big Earner",
+    desc:"Most coins collected total",
+    icon:"🤑",
+    color:"#ffd60a",
+    get:(p)=>p.stats.coinsEarned,
+    fmt:(v)=>`${v} coins earned`,
+  },
+  {
+    id:"coinsSpent",
+    label:"Big Spender",
+    desc:"Most coins spent",
+    icon:"💳",
+    color:"#9e15c0",
+    get:(p)=>p.stats.coinsSpent,
+    fmt:(v)=>`${v} coins spent`,
+  },
+  {
+    id:"itemsBought",
+    label:"Shopaholic",
+    desc:"Most items purchased",
+    icon:"🛒",
+    color:"#38b000",
+    get:(p)=>p.stats.itemsBought,
+    fmt:(v)=>`${v} items`,
+  },
+  {
+    id:"starsPassed",
+    label:"Star Hunter",
+    desc:"Passed the star and bought it most",
+    icon:"⭐",
+    color:"#ffd60a",
+    get:(p)=>p.stats.starsPassed,
+    fmt:(v)=>`${v} stars caught`,
+  },
+];
+
+function pickBonusCategories() {
+  // Shuffle and pick 3, filtering out any where all values are 0
+  const shuffled = [...BONUS_CATEGORIES].sort(()=>Math.random()-0.5);
+  const valid = shuffled.filter(cat => players.some(p=>cat.get(p)>0));
+  // Ensure we always have 3 (fall back to any if needed)
+  return (valid.length >= 3 ? valid : shuffled).slice(0,3);
 }
+
+function showGameOver() {
+  // Stop any game music
+  if (typeof MUSIC !== "undefined") MUSIC.stop();
+
+  // Pick 3 random bonus categories
+  const bonusCats = pickBonusCategories();
+
+  // Apply bonus stars (before revealing)
+  bonusCats.forEach(cat => {
+    const scores = players.map(p=>cat.get(p));
+    const best   = Math.max(...scores);
+    players.forEach(p => { if (cat.get(p) === best) { p.stars++; if (p.stats) p.stats.starsFromBonus++; } });
+  });
+
+  // Final sort after bonus stars
+  const sorted = [...players].sort((a,b) => b.stars - a.stars || b.coins - a.coins);
+
+  // Build and mount the ceremony overlay
+  const ov = document.createElement("div");
+  ov.id = "gameOverCeremony";
+  ov.style.cssText = `
+    position:fixed;inset:0;z-index:2000;
+    background:#000;
+    font-family:'Fredoka One',cursive;
+    color:white;overflow:hidden;
+  `;
+  document.body.appendChild(ov);
+
+  // Confetti canvas (underneath everything, drawn last)
+  const confCanvas = document.createElement("canvas");
+  confCanvas.style.cssText = "position:absolute;inset:0;pointer-events:none;z-index:1;";
+  confCanvas.width  = window.innerWidth;
+  confCanvas.height = window.innerHeight;
+  ov.appendChild(confCanvas);
+  const confCtx = confCanvas.getContext("2d");
+  let confetti = [];
+  let confettiActive = false;
+
+  function spawnConfetti() {
+    confettiActive = true;
+    const colors = ["#ff6b9d","#c77dff","#ffd60a","#06d6a0","#4cc9f0","#f4845f","#a855f7","#38b000"];
+    for (let i = 0; i < 220; i++) {
+      confetti.push({
+        x: Math.random() * confCanvas.width,
+        y: -20 - Math.random() * 200,
+        vx: (Math.random()-0.5) * 4,
+        vy: 2 + Math.random() * 4,
+        r: 5 + Math.random() * 8,
+        rot: Math.random()*360,
+        rotV: (Math.random()-0.5)*8,
+        color: colors[Math.floor(Math.random()*colors.length)],
+        shape: Math.random()<0.5?"rect":"circle",
+        alpha:1,
+      });
+    }
+  }
+
+  function tickConfetti() {
+    if (!confettiActive) return;
+    confCtx.clearRect(0,0,confCanvas.width,confCanvas.height);
+    confetti = confetti.filter(c=>c.y < confCanvas.height+50 && c.alpha>0.05);
+    confetti.forEach(c=>{
+      c.x+=c.vx; c.y+=c.vy; c.rot+=c.rotV; c.vy+=0.06;
+      if (c.y > confCanvas.height*0.6) c.alpha -= 0.012;
+      confCtx.save();
+      confCtx.globalAlpha = c.alpha;
+      confCtx.fillStyle = c.color;
+      confCtx.translate(c.x, c.y);
+      confCtx.rotate(c.rot * Math.PI/180);
+      if (c.shape==="circle") {
+        confCtx.beginPath(); confCtx.arc(0,0,c.r,0,Math.PI*2); confCtx.fill();
+      } else {
+        confCtx.fillRect(-c.r,-c.r/2,c.r*2,c.r);
+      }
+      confCtx.restore();
+    });
+    requestAnimationFrame(tickConfetti);
+  }
+
+  // Main content div
+  const main = document.createElement("div");
+  main.style.cssText = `
+    position:absolute;inset:0;z-index:10;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+  `;
+  ov.appendChild(main);
+
+  // Helper: fade in an element
+  function fadeIn(el, duration=600) {
+    el.style.opacity="0";
+    el.style.transition=`opacity ${duration}ms ease`;
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{ el.style.opacity="1"; }));
+  }
+
+  // Helper: slide up + fade in
+  function slideUp(el, duration=500, delay=0) {
+    el.style.opacity="0";
+    el.style.transform="translateY(40px)";
+    el.style.transition=`opacity ${duration}ms ease ${delay}ms, transform ${duration}ms ease ${delay}ms`;
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{
+      el.style.opacity="1"; el.style.transform="translateY(0)";
+    }));
+  }
+
+  // Helper: promise-based delay
+  const wait = ms => new Promise(res=>setTimeout(res,ms));
+
+  // Helper: draw a player avatar (image or colour circle)
+  function makeAvatar(p, size=72) {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = `
+      width:${size}px;height:${size}px;border-radius:50%;
+      border:3px solid ${p.color};
+      overflow:hidden;background:${p.color};
+      display:flex;align-items:center;justify-content:center;
+      font-size:${size*0.5}px;flex-shrink:0;
+      box-shadow:0 0 ${size*0.4}px ${p.color}88;
+    `;
+    if (p.image && p.image.complete && p.image.naturalWidth>0 && !p.image._failed) {
+      const img = document.createElement("img");
+      img.src = p.image.src;
+      img.style.cssText=`width:100%;height:100%;object-fit:cover;`;
+      wrap.appendChild(img);
+    } else {
+      wrap.textContent = p.emoji;
+    }
+    return wrap;
+  }
+
+  // ── PHASE 1: Curtain ───────────────────────────────────────
+  async function phase1() {
+    main.innerHTML = "";
+
+    const title = document.createElement("div");
+    title.style.cssText=`
+      font-size:clamp(28px,5vw,64px);
+      background:linear-gradient(135deg,#ff6b9d,#c77dff,#ffd60a);
+      -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+      background-clip:text;text-align:center;padding:0 20px;
+      margin-bottom:16px;
+    `;
+    title.textContent="14 Months of Adventure";
+    main.appendChild(title);
+
+    const sub = document.createElement("div");
+    sub.style.cssText="font-size:clamp(14px,2vw,22px);opacity:.6;text-align:center;margin-bottom:40px;";
+    sub.textContent="The final results are in…";
+    main.appendChild(sub);
+
+    const btn = document.createElement("button");
+    btn.textContent="✨ Begin the Ceremony";
+    btn.style.cssText=`
+      padding:16px 44px;font-size:clamp(16px,2vw,22px);
+      font-family:'Fredoka One',cursive;
+      background:linear-gradient(135deg,#ff6b9d,#c77dff);
+      border:none;border-radius:50px;color:white;cursor:pointer;
+      box-shadow:0 6px 30px rgba(255,107,157,0.5);
+      transition:transform .15s;
+    `;
+    btn.onmouseenter=()=>btn.style.transform="scale(1.05)";
+    btn.onmouseleave=()=>btn.style.transform="scale(1)";
+    main.appendChild(btn);
+
+    slideUp(title,700,0);
+    slideUp(sub,700,200);
+    slideUp(btn,700,500);
+
+    await new Promise(res=>{ btn.onclick=()=>res(); });
+    await phase2();
+  }
+
+  // ── PHASE 2: Bonus category reveals ───────────────────────
+  async function phase2() {
+    // Re-pick to show who won what (stars already applied above)
+    for (let i=0; i<bonusCats.length; i++) {
+      await revealCategory(bonusCats[i], i, bonusCats.length);
+    }
+    await phase3();
+  }
+
+  async function revealCategory(cat, idx, total) {
+    main.innerHTML="";
+    ov.style.background="rgba(0,0,0,0.95)";
+
+    const progress = document.createElement("div");
+    progress.style.cssText="position:absolute;top:22px;font-size:14px;opacity:.45;";
+    progress.textContent=`Bonus Award ${idx+1} of ${total}`;
+    main.appendChild(progress);
+
+    const headerIcon = document.createElement("div");
+    headerIcon.style.cssText="font-size:clamp(40px,7vw,80px);margin-bottom:10px;";
+    headerIcon.textContent=cat.icon;
+    main.appendChild(headerIcon);
+
+    const catName = document.createElement("div");
+    catName.style.cssText=`
+      font-size:clamp(20px,4vw,46px);
+      color:${cat.color};margin-bottom:6px;text-align:center;
+    `;
+    catName.textContent=cat.label;
+    main.appendChild(catName);
+
+    const catDesc = document.createElement("div");
+    catDesc.style.cssText="font-size:clamp(12px,1.5vw,18px);opacity:.55;margin-bottom:32px;";
+    catDesc.textContent=cat.desc;
+    main.appendChild(catDesc);
+
+    slideUp(headerIcon,500,0);
+    slideUp(catName,500,100);
+    slideUp(catDesc,500,200);
+
+    await wait(900);
+
+    // Show all 4 players with their stat values + reveal winner last
+    const scores = players.map(p=>({p, val:cat.get(p)}));
+    const best   = Math.max(...scores.map(s=>s.val));
+
+    // Sort: non-winners first, winner last (dramatic)
+    const sorted = [...scores].sort((a,b)=>{
+      if (a.val===best && b.val!==best) return 1;
+      if (b.val===best && a.val!==best) return -1;
+      return b.val - a.val;
+    });
+
+    for (let i=0; i<sorted.length; i++) {
+      const {p, val} = sorted[i];
+      const isWinner = val === best;
+      await wait(isWinner ? 600 : 300);
+
+      const row = document.createElement("div");
+      row.style.cssText=`
+        display:flex;align-items:center;gap:16px;
+        padding:12px 24px;border-radius:16px;
+        background:${isWinner ? `${cat.color}22` : "rgba(255,255,255,0.04)"};
+        border:1.5px solid ${isWinner ? cat.color : "rgba(255,255,255,0.1)"};
+        margin:5px 0;width:clamp(280px,50vw,480px);
+        transform:translateX(-30px);opacity:0;
+        transition:transform .4s ease,opacity .4s ease;
+      `;
+
+      const av = makeAvatar(p, isWinner?56:44);
+      row.appendChild(av);
+
+      const info = document.createElement("div");
+      info.style.cssText="flex:1;";
+      info.innerHTML=`
+        <div style="font-size:${isWinner?"20px":"16px"};color:${p.color}">${p.name}</div>
+        <div style="font-size:13px;opacity:.6">${cat.fmt(Math.abs(val))}</div>
+      `;
+      row.appendChild(info);
+
+      if (isWinner) {
+        const badge = document.createElement("div");
+        badge.style.cssText=`
+          font-size:22px;background:${cat.color};color:#000;
+          padding:4px 12px;border-radius:20px;font-size:14px;font-weight:900;
+        `;
+        badge.textContent="⭐ +1 STAR";
+        row.appendChild(badge);
+      }
+
+      main.appendChild(row);
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        row.style.transform="translateX(0)"; row.style.opacity="1";
+      }));
+    }
+
+    await wait(isWinner=>true, 1800);
+    await wait(1800);
+  }
+
+  // ── PHASE 3: Podium reveal 4th → 1st ─────────────────────
+  async function phase3() {
+    main.innerHTML="";
+    ov.style.background="linear-gradient(160deg,#0d0d1a,#13132a)";
+
+    const heading = document.createElement("div");
+    heading.style.cssText="font-size:clamp(18px,3vw,36px);opacity:.7;margin-bottom:30px;";
+    heading.textContent="🏆 Final Standings";
+    main.appendChild(heading);
+    slideUp(heading);
+
+    const places = ["🏅 4th Place","🥉 3rd Place","🥈 2nd Place"];
+    const colors = ["rgba(255,255,255,0.15)","#cd7f32","#c0c0c0"];
+
+    for (let i=3; i>=1; i--) {
+      const p = sorted[i];
+      await wait(i===3 ? 600 : 1000);
+
+      const card = document.createElement("div");
+      card.style.cssText=`
+        display:flex;align-items:center;gap:18px;
+        padding:14px 28px;border-radius:20px;
+        background:${colors[i-1]};
+        margin:7px 0;width:clamp(280px,55vw,500px);
+        opacity:0;transform:translateX(-40px);
+        transition:opacity .5s ease,transform .5s ease;
+      `;
+
+      const av = makeAvatar(p, 54);
+      card.appendChild(av);
+
+      const txt = document.createElement("div");
+      txt.innerHTML=`
+        <div style="font-size:12px;opacity:.6">${places[i-1]}</div>
+        <div style="font-size:20px;color:${p.color}">${p.name}</div>
+        <div style="font-size:13px;opacity:.7">⭐ ${p.stars} stars  💰 ${p.coins} coins</div>
+      `;
+      card.appendChild(txt);
+      main.appendChild(card);
+
+      requestAnimationFrame(()=>requestAnimationFrame(()=>{
+        card.style.opacity="1"; card.style.transform="translateX(0)";
+      }));
+    }
+
+    await wait(1200);
+
+    const andThe = document.createElement("div");
+    andThe.style.cssText="font-size:clamp(14px,2vw,24px);opacity:.6;margin-top:20px;";
+    andThe.textContent="And the winner is…";
+    main.appendChild(andThe);
+    slideUp(andThe,600);
+
+    await wait(1600);
+    await phase4();
+  }
+
+  // ── PHASE 4: Winner reveal ─────────────────────────────────
+  async function phase4() {
+    main.innerHTML="";
+    ov.style.background="linear-gradient(160deg,#0d0d1a,#1a0a2e)";
+
+    spawnConfetti();
+    tickConfetti();
+
+    const winner = sorted[0];
+
+    // Spotlight
+    const spot = document.createElement("div");
+    spot.style.cssText=`
+      position:absolute;inset:0;pointer-events:none;z-index:5;
+      background:radial-gradient(ellipse at 50% 40%,rgba(255,215,0,0.18) 0%,transparent 60%);
+    `;
+    ov.appendChild(spot);
+
+    const crown = document.createElement("div");
+    crown.style.cssText="font-size:clamp(40px,8vw,90px);z-index:10;";
+    crown.textContent="👑";
+    main.appendChild(crown);
+
+    const avWrap = document.createElement("div");
+    avWrap.style.cssText="z-index:10;margin:12px 0;";
+    const av = makeAvatar(winner,110);
+    av.style.animation="winnerPulse 1.2s ease-in-out infinite alternate";
+    avWrap.appendChild(av);
+    main.appendChild(avWrap);
+
+    const nameEl = document.createElement("div");
+    nameEl.style.cssText=`
+      font-size:clamp(28px,6vw,72px);
+      color:${winner.color};
+      text-shadow:0 0 40px ${winner.color}88;
+      z-index:10;margin-bottom:6px;text-align:center;
+    `;
+    nameEl.textContent=winner.name;
+    main.appendChild(nameEl);
+
+    const tagline = document.createElement("div");
+    tagline.style.cssText="font-size:clamp(14px,2vw,24px);opacity:.65;z-index:10;margin-bottom:28px;text-align:center;";
+    tagline.textContent="🏆 Champion of LoveQuest 💖";
+    main.appendChild(tagline);
+
+    const scoreEl = document.createElement("div");
+    scoreEl.style.cssText=`
+      font-size:clamp(14px,1.8vw,22px);
+      background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,.2);
+      border-radius:16px;padding:12px 28px;z-index:10;margin-bottom:36px;
+    `;
+    scoreEl.textContent=`⭐ ${winner.stars} Stars  •  💰 ${winner.coins} Coins`;
+    main.appendChild(scoreEl);
+
+    slideUp(crown,600,0);
+    slideUp(avWrap,700,200);
+    slideUp(nameEl,700,400);
+    slideUp(tagline,700,600);
+    slideUp(scoreEl,700,800);
+
+    await wait(1000);
+
+    // Final standings mini-table
+    const standingsWrap = document.createElement("div");
+    standingsWrap.style.cssText=`
+      display:flex;gap:12px;flex-wrap:wrap;justify-content:center;
+      z-index:10;margin-bottom:30px;
+    `;
+    sorted.forEach((p,i)=>{
+      const chip = document.createElement("div");
+      chip.style.cssText=`
+        display:flex;align-items:center;gap:8px;
+        padding:8px 16px;border-radius:30px;
+        background:rgba(255,255,255,0.06);
+        border:1px solid ${p.color}55;
+        font-size:13px;opacity:0;
+        transition:opacity .5s ease ${i*200+200}ms;
+      `;
+      chip.innerHTML=`
+        <span style="color:${p.color}">${["🥇","🥈","🥉","🏅"][i]}</span>
+        <span style="color:${p.color}">${p.name}</span>
+        <span style="opacity:.6">⭐${p.stars} 💰${p.coins}</span>
+      `;
+      standingsWrap.appendChild(chip);
+      requestAnimationFrame(()=>requestAnimationFrame(()=>chip.style.opacity="1"));
+    });
+    main.appendChild(standingsWrap);
+
+    const replayBtn = document.createElement("button");
+    replayBtn.textContent="🎲 Play Again";
+    replayBtn.style.cssText=`
+      padding:14px 42px;font-size:clamp(16px,2vw,22px);
+      font-family:'Fredoka One',cursive;
+      background:linear-gradient(135deg,#ff6b9d,#c77dff);
+      border:none;border-radius:50px;color:white;cursor:pointer;z-index:10;
+      box-shadow:0 6px 30px rgba(255,107,157,0.5);
+      transition:transform .15s;
+    `;
+    replayBtn.onmouseenter=()=>replayBtn.style.transform="scale(1.05)";
+    replayBtn.onmouseleave=()=>replayBtn.style.transform="scale(1)";
+    replayBtn.onclick=()=>location.reload();
+    main.appendChild(replayBtn);
+    slideUp(replayBtn,600,1200);
+  }
+
+  // Add winner pulse keyframe dynamically
+  if (!document.getElementById("winnerPulseStyle")) {
+    const style = document.createElement("style");
+    style.id="winnerPulseStyle";
+    style.textContent=`
+      @keyframes winnerPulse {
+        from { box-shadow: 0 0 30px currentColor, 0 0 0 0 rgba(255,215,0,0.4); }
+        to   { box-shadow: 0 0 60px currentColor, 0 0 0 20px rgba(255,215,0,0); }
+      }
+    `;
+    document.head.appendChild(style);
+  }
+
+  // Start the ceremony
+  phase1();
+}
+
+
 
 // ─────────────────────────────────────────────────────────────
 //  RENDER
@@ -1774,144 +2629,429 @@ window.initGame   = initGame;
 window.useItem    = useItem;
 
 // ─────────────────────────────────────────────────────────────
-//  MULTIPLAYER  (PeerJS — works across computers, no server needed)
+//  MULTIPLAYER  –  Real-time sync via PeerJS
+//
+//  ARCHITECTURE:
+//   Host = Player 1 (you). Runs all game logic including AI.
+//   Guest = Player 2 (her). Receives events and mirrors them.
+//
+//  EVENT TYPES sent over the wire:
+//   "sync"        — full state dump on connect
+//   "turn"        — full state at start of each human turn
+//   "roll"        — human player rolled: animate dice + start moving
+//   "aiRoll"      — AI rolled: animate dice + start moving on guest
+//   "aiTurnStart" — camera follows the AI that's about to move
+//   "fork"        — human chose a fork path
+//   "starMove"    — star relocated, play fly animation
+//   "landing"     — player landed on a space (camera + toast context)
+//   "toast"       — show the same toast message on both screens
+//   "cam"         — nudge the guest camera toward a world position
 // ─────────────────────────────────────────────────────────────
-let netPeer = null, netConn = null, netRole = null; // "host"|"guest"
 
-// Called at end of each human turn to notify remote player
-function netSendTurn() {
+let netPeer = null;
+let netConn = null;
+let netRole = null;   // "host" | "guest" | null
+
+// ── BROADCAST  (host→guest and guest→host, one call does both) ──
+// Safe to call even when not connected — just a no-op.
+function netBroadcast(msg) {
   if (!netConn) return;
-  try {
-    netConn.send({ type:"turn", playerIndex: currentPlayerIndex,
-      gameState: netSerialiseState() });
-  } catch(e) {}
+  try { netConn.send(msg); } catch(e) {}
 }
 
+// ── FULL STATE SERIALISE ─────────────────────────────────────
 function netSerialiseState() {
   return {
     players: players.map(p => ({
       coins: p.coins, stars: p.stars, nodeId: p.nodeId,
-      inventory: p.inventory, pendingBoost: p.pendingBoost,
-      pendingDoubleDice: p.pendingDoubleDice,
+      inventory:        p.inventory        || [],
+      pendingBoost:     p.pendingBoost     || 0,
+      pendingDoubleDice:p.pendingDoubleDice|| false,
+      duelInventory:    p.duelInventory    || [],
+      bonusMaxHp:       p.bonusMaxHp       || 0,
     })),
     round, currentPlayerIndex, starNodeId,
   };
 }
 
 function netApplyState(state) {
-  state.players.forEach((s,i) => {
-    players[i].coins = s.coins; players[i].stars = s.stars;
-    players[i].nodeId = s.nodeId; players[i].inventory = s.inventory;
-    players[i].pendingBoost = s.pendingBoost;
-    players[i].pendingDoubleDice = s.pendingDoubleDice;
+  if (!state || !state.players) return;
+  state.players.forEach((s, i) => {
+    if (!players[i]) return;
+    players[i].coins             = s.coins;
+    players[i].stars             = s.stars;
+    players[i].inventory         = s.inventory        || [];
+    players[i].pendingBoost      = s.pendingBoost     || 0;
+    players[i].pendingDoubleDice = s.pendingDoubleDice|| false;
+    players[i].duelInventory     = s.duelInventory    || [];
+    players[i].bonusMaxHp        = s.bonusMaxHp       || 0;
     const node = NODE_MAP[s.nodeId];
-    if (node) { players[i].x = node.x; players[i].y = node.y; }
+    if (node) { players[i].nodeId = s.nodeId; players[i].x = node.x; players[i].y = node.y; }
   });
-  round = state.round;
+  round              = state.round;
   currentPlayerIndex = state.currentPlayerIndex;
-  starNodeId = state.starNodeId;
+  starNodeId         = state.starNodeId;
+  boardDirty         = true;
   document.getElementById("roundNum").textContent = round;
-  updateHUD(); focusOnCurrentPlayer();
+  updateHUD();
 }
 
-function netSetupHost(roomCode) {
-  if (typeof Peer === "undefined") return;
-  netRole = "host";
-  netPeer = new Peer(`lovequest-${roomCode}`, { debug:0 });
-  netPeer.on("connection", conn => {
-    netConn = conn;
-    conn.on("data", netHandleData);
-    conn.on("open", () => {
-      showToast("💕 Partner connected! Game synced.", 2500);
-      // Send full state
-      conn.send({ type:"sync", gameState: netSerialiseState() });
-    });
-  });
-  netPeer.on("error", () => {}); // silently ignore
+// ── TURN SYNC (host → guest at start of each human turn) ─────
+function netSendTurn() {
+  if (!netConn) return;
+  // Both host and guest broadcast turn sync — the receiver applies state
+  netBroadcast({ type: "turn", gameState: netSerialiseState() });
 }
 
-function netSetupGuest(roomCode) {
-  if (typeof Peer === "undefined") return;
-  netRole = "guest";
-  netPeer = new Peer({ debug:0 });
-  netPeer.on("open", () => {
-    netConn = netPeer.connect(`lovequest-${roomCode}`);
-    netConn.on("open", () => showToast("💕 Connected to partner!", 2500));
-    netConn.on("data", netHandleData);
-  });
-  netPeer.on("error", () => {});
+// ── CAMERA BROADCAST ─────────────────────────────────────────
+// Nudge the other screen's camera toward a world position.
+function netSendCamera(x, y, zoom) {
+  netBroadcast({ type: "cam", x, y, zoom });
 }
 
+// ── INCOMING EVENT HANDLER ───────────────────────────────────
 function netHandleData(data) {
-  if (data.type === "sync" || data.type === "turn") {
-    netApplyState(data.gameState);
-    turnPhase = "idle";
-    document.getElementById("btnRoll").disabled = false;
-    const cur = players[currentPlayerIndex];
-    const isMyTurn = (netRole==="host" && currentPlayerIndex===0) ||
-                     (netRole==="guest" && currentPlayerIndex===1);
-    if (isMyTurn) showToast(`🎲 Your turn, ${cur.name}! Roll the dice.`, 2500);
-    else if (currentPlayerIndex >= 2) {
-      setTimeout(() => aiTakeTurn(cur), 900);
+  if (!data || !data.type) return;
+
+  switch (data.type) {
+
+    // ── Full state dumps ────────────────────────────────────
+    case "sync":
+    case "turn": {
+      netApplyState(data.gameState);
+      turnPhase = "idle";
+      document.getElementById("btnRoll").disabled = false;
+      const cur = players[currentPlayerIndex];
+      const mine = isMyPlayerTurn();
+      if (mine) {
+        showToast(`🎲 Your turn, ${cur.name}! Roll the dice.`, 2500);
+        focusOnCurrentPlayer();
+      } else if (currentPlayerIndex >= 2 && netRole === "guest") {
+        // Guest just watches AI turns — host drives them, guest mirrors via aiRoll/aiTurnStart
+        showToast(`🤖 ${cur.name}'s turn…`, 1800);
+        focusOnCurrentPlayer();
+      } else {
+        showToast(`⏳ ${cur.name}'s turn…`, 2000);
+        focusOnCurrentPlayer();
+      }
+      break;
+    }
+
+    // ── Human player rolled ─────────────────────────────────
+    // Mirror dice animation + movement on the watching screen
+    case "roll": {
+      const p = players[data.playerIndex];
+      if (!p) break;
+      animateDice(data.result, () => {
+        document.getElementById("diceValue").textContent = data.result;
+        showToast(`🎲 Rolled a ${data.result}! Moving…`, 1800);
+        // Focus camera on that player then animate movement
+        currentPlayerIndex = data.playerIndex;
+        focusOnCurrentPlayer();
+        buildAndMove(p, data.result);
+      });
+      break;
+    }
+
+    // ── AI rolled — mirror AI movement on both screens ──────
+    case "aiRoll": {
+      const p = players[data.playerIndex];
+      if (!p) break;
+      currentPlayerIndex = data.playerIndex;
+      focusOnCurrentPlayer();
+      animateDice(data.result, () => {
+        document.getElementById("diceValue").textContent = data.result;
+        showToast(`🤖 ${p.name} rolled a ${data.result}!`, 1800);
+        buildAndMove(p, data.result);
+      });
+      break;
+    }
+
+    // ── AI turn starting — pan camera to that player ────────
+    case "aiTurnStart": {
+      currentPlayerIndex = data.playerIndex;
+      updateHUD();
+      focusOnCurrentPlayer();
+      const cur = players[data.playerIndex];
+      if (cur) showToast(`🤖 ${cur.name} is rolling…`, 1500);
+      break;
+    }
+
+    // ── Fork chosen — teleport player to branch + continue ──
+    case "fork": {
+      const p = players[data.playerIndex];
+      if (!p) break;
+      forkArrows = null;
+      const n = NODE_MAP[data.chosenId];
+      if (n) { p.nodeId = data.chosenId; p.x = n.x; p.y = n.y; }
+      focusOnCurrentPlayer();
+      if (data.stepsRemaining - 1 > 0) buildAndMove(p, data.stepsRemaining - 1);
+      else { turnPhase = "landing"; handleLanding(p); }
+      break;
+    }
+
+    // ── Star relocated — play the fly animation ──────────────
+    case "starMove": {
+      starNodeId = data.newId;
+      boardDirty = true;
+      starAnim   = { fromX: data.fromX, fromY: data.fromY,
+                     toX: data.toX, toY: data.toY, t:0, duration:1.8 };
+      zoomOut();
+      setTimeout(() => {
+        showToast("⭐ Star has landed somewhere new!", 2500);
+        setTimeout(focusOnCurrentPlayer, 2500);
+      }, 400);
+      break;
+    }
+
+    // ── Landing — pan camera to landed player & show context ─
+    case "landing": {
+      const p = players[data.playerIndex];
+      if (!p) break;
+      currentPlayerIndex = data.playerIndex;
+      focusOnCurrentPlayer();
+      // Show a brief toast so the watcher knows what happened
+      const spaceLabel = CONFIG.spaceColors[
+        data.spaceType === "starLand" ? "star" : data.spaceType
+      ]?.label || "";
+      if (spaceLabel) showToast(`${CONFIG.spaceColors[data.spaceType === "starLand" ? "star" : data.spaceType]?.icon || "📍"} ${p.name} landed on ${spaceLabel}`, 2200);
+      // State will be pushed via "turn" once the landing resolves on host
+      break;
+    }
+
+    // ── Camera nudge ────────────────────────────────────────
+    case "cam": {
+      targetCam.x = data.x;
+      targetCam.y = data.y;
+      if (data.zoom) targetCam.zoom = data.zoom;
+      break;
+    }
+
+    // ── Generic toast mirror ─────────────────────────────────
+    case "toast": {
+      if (data.msg) showToast(data.msg, data.duration || 2500);
+      break;
     }
   }
-  if (data.type === "roll") {
-    // Remote player rolled — animate their dice
-    animateDice(data.result, () => {
-      document.getElementById("diceValue").textContent = data.result;
-      buildAndMove(players[data.playerIndex], data.result);
-    });
-  }
 }
 
-// Multiplayer UI — shown in top bar
+// Which player index belongs to me on this screen?
+function myPlayerIndex() {
+  if (netRole === "host")  return 0;
+  if (netRole === "guest") return 1;
+  return currentPlayerIndex;
+}
+
+function isMyPlayerTurn() {
+  if (!netRole) return true;
+  return currentPlayerIndex === myPlayerIndex();
+}
+
+// ── HOST SETUP ───────────────────────────────────────────────
+function netSetupHost(roomCode) {
+  if (typeof Peer === "undefined") {
+    updateMpStatus("❌ PeerJS not loaded — check internet connection.", "red"); return;
+  }
+  cleanupPeer();
+  netRole = "host";
+
+  netPeer = new Peer(`lovequest-${roomCode}`, {
+    host:"0.peerjs.com", port:443, path:"/", secure:true, debug:0,
+  });
+
+  netPeer.on("open", () => {
+    updateMpStatus(`✅ Room "${roomCode}" is live!\nText her the code and tell her to click Join.`, "green");
+  });
+
+  netPeer.on("connection", conn => {
+    netConn = conn;
+    conn.on("open", () => {
+      updateMpStatus("💕 She's connected! Syncing game…", "green");
+      showToast("💕 Partner connected — syncing!", 2500);
+      // Push full state so her screen matches yours instantly
+      conn.send({ type:"sync", gameState: netSerialiseState() });
+    });
+    conn.on("data", netHandleData);
+    conn.on("close", () => {
+      netConn = null;
+      updateMpStatus("⚠️ Partner disconnected.", "orange");
+      showToast("⚠️ Partner disconnected.", 3000);
+    });
+  });
+
+  netPeer.on("error", err => {
+    if (err.type === "unavailable-id")
+      updateMpStatus(`❌ Room code "${roomCode}" already taken.\nTry a different one!`, "red");
+    else
+      updateMpStatus(`❌ Error: ${err.type}`, "red");
+  });
+}
+
+// ── GUEST SETUP ──────────────────────────────────────────────
+function netSetupGuest(roomCode) {
+  if (typeof Peer === "undefined") {
+    updateMpStatus("❌ PeerJS not loaded — check internet connection.", "red"); return;
+  }
+  cleanupPeer();
+  netRole = "guest";
+
+  netPeer = new Peer({ host:"0.peerjs.com", port:443, path:"/", secure:true, debug:0 });
+
+  netPeer.on("open", () => {
+    updateMpStatus(`Connecting to "${roomCode}"…`, "orange");
+    netConn = netPeer.connect(`lovequest-${roomCode}`, { reliable:true });
+
+    netConn.on("open", () => {
+      updateMpStatus("💕 Connected! Waiting for game sync…", "green");
+      showToast("💕 Connected to his game!", 2500);
+    });
+    netConn.on("data", netHandleData);
+    netConn.on("close", () => {
+      netConn = null;
+      updateMpStatus("⚠️ Lost connection to host.", "orange");
+      showToast("⚠️ Lost connection.", 3000);
+    });
+  });
+
+  netPeer.on("error", err => {
+    if (err.type === "peer-unavailable")
+      updateMpStatus(`❌ Room "${roomCode}" not found.\nMake sure he hosted first!`, "red");
+    else
+      updateMpStatus(`❌ Error: ${err.type}`, "red");
+  });
+}
+
+function cleanupPeer() {
+  if (netConn)  { try { netConn.close();    } catch(e){} netConn  = null; }
+  if (netPeer)  { try { netPeer.destroy();  } catch(e){} netPeer  = null; }
+  netRole = null;
+}
+
+// ── ROLL GUARD ───────────────────────────────────────────────
+function netCanRoll() {
+  if (!netRole) return true;
+  if (turnPhase !== "idle") return false;
+  return isMyPlayerTurn();
+}
+
+// ── MULTIPLAYER PANEL UI ──────────────────────────────────────
 function showMultiplayerPanel() {
   const existing = document.getElementById("mpPanel");
   if (existing) { existing.remove(); return; }
 
   const panel = document.createElement("div");
   panel.id = "mpPanel";
-  panel.style.cssText = `position:fixed;top:70px;right:16px;z-index:400;
-    background:rgba(20,10,40,0.95);border:1px solid rgba(255,255,255,0.15);
-    border-radius:16px;padding:18px 22px;font-family:'Fredoka One',cursive;
-    color:white;min-width:260px;box-shadow:0 8px 32px rgba(0,0,0,0.5);`;
+  panel.style.cssText = `
+    position:fixed;top:70px;right:16px;z-index:400;
+    background:rgba(13,10,30,0.97);
+    border:1px solid rgba(255,255,255,0.18);
+    border-radius:20px;padding:22px 24px;
+    font-family:'Nunito',sans-serif;
+    color:white;min-width:300px;max-width:340px;
+    box-shadow:0 12px 40px rgba(0,0,0,0.6);
+  `;
 
   panel.innerHTML = `
-    <div style="font-size:18px;margin-bottom:14px">💕 Multiplayer</div>
-    <div style="font-size:13px;opacity:.6;margin-bottom:10px">
-      Player 1 (you) = Host &nbsp;|&nbsp; Player 2 (her) = Guest
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+      <span style="font-family:'Fredoka One',cursive;font-size:20px">💕 Play Together</span>
+      <button onclick="document.getElementById('mpPanel').remove()"
+        style="background:none;border:none;color:rgba(255,255,255,0.4);font-size:20px;cursor:pointer">✕</button>
     </div>
-    <div style="margin-bottom:10px">
-      <label style="font-size:13px;opacity:.7">Room Code</label><br>
-      <input id="mpCode" placeholder="e.g. love42" style="width:100%;margin-top:4px;
-        padding:8px 12px;border-radius:10px;border:1px solid rgba(255,255,255,.2);
-        background:rgba(255,255,255,.08);color:white;font-family:'Fredoka One',cursive;
-        font-size:16px;box-sizing:border-box;"/>
+
+    <div style="font-size:12px;opacity:.5;margin-bottom:16px;line-height:1.6;
+                border-bottom:1px solid rgba(255,255,255,0.1);padding-bottom:12px">
+      Both screens stay in sync in real-time —<br>
+      movement, AI, star, events, everything. 💖
     </div>
-    <div style="display:flex;gap:8px;">
-      <button onclick="mpHost()" style="flex:1;padding:10px;font-family:'Fredoka One',cursive;
-        font-size:15px;background:linear-gradient(135deg,#9e15c0,#c77dff);border:none;
-        border-radius:12px;color:white;cursor:pointer;">Host 👑</button>
-      <button onclick="mpJoin()" style="flex:1;padding:10px;font-family:'Fredoka One',cursive;
-        font-size:15px;background:linear-gradient(135deg,#1a6a8a,#4cc9f0);border:none;
-        border-radius:12px;color:white;cursor:pointer;">Join 💕</button>
+
+    <div style="background:rgba(158,21,192,0.15);border:1px solid rgba(158,21,192,0.3);
+                border-radius:12px;padding:14px;margin-bottom:12px">
+      <div style="font-family:'Fredoka One',cursive;font-size:15px;margin-bottom:6px">
+        👑 You — Host (Player 1)
+      </div>
+      <div style="font-size:12px;opacity:0.65;margin-bottom:10px;line-height:1.5">
+        Type any room code → click Host<br>
+        Then text her the code!
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="mpCode" placeholder="e.g. love14"
+          style="flex:1;padding:9px 12px;border-radius:10px;
+                 border:1px solid rgba(255,255,255,0.2);
+                 background:rgba(255,255,255,0.08);
+                 color:white;font-family:'Fredoka One',cursive;font-size:16px"/>
+        <button onclick="mpHost()"
+          style="padding:9px 16px;font-family:'Fredoka One',cursive;font-size:15px;
+                 background:linear-gradient(135deg,#9e15c0,#c77dff);border:none;
+                 border-radius:10px;color:white;cursor:pointer">Host 👑</button>
+      </div>
     </div>
-    <div id="mpStatus" style="font-size:12px;opacity:.5;margin-top:10px;text-align:center">
-      Enter a code and Host or Join
-    </div>`;
+
+    <div style="background:rgba(26,106,138,0.15);border:1px solid rgba(26,106,138,0.35);
+                border-radius:12px;padding:14px;margin-bottom:14px">
+      <div style="font-family:'Fredoka One',cursive;font-size:15px;margin-bottom:6px">
+        💜 Her — Guest (Player 2)
+      </div>
+      <div style="font-size:12px;opacity:0.65;margin-bottom:10px;line-height:1.5">
+        She opens the game → enters the same code → Join
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="mpCodeJoin" placeholder="same code as host"
+          style="flex:1;padding:9px 12px;border-radius:10px;
+                 border:1px solid rgba(255,255,255,0.2);
+                 background:rgba(255,255,255,0.08);
+                 color:white;font-family:'Fredoka One',cursive;font-size:16px"/>
+        <button onclick="mpJoin()"
+          style="padding:9px 16px;font-family:'Fredoka One',cursive;font-size:15px;
+                 background:linear-gradient(135deg,#1a6a8a,#4cc9f0);border:none;
+                 border-radius:10px;color:white;cursor:pointer">Join 💕</button>
+      </div>
+    </div>
+
+    <div id="mpStatus"
+      style="font-size:12px;text-align:center;padding:10px;border-radius:10px;
+             background:rgba(255,255,255,0.05);opacity:0.75;line-height:1.5;
+             white-space:pre-line">
+      Enter a room code above to get started
+    </div>
+
+    <div style="margin-top:12px;font-size:11px;opacity:0.3;text-align:center;line-height:1.5">
+      Powered by PeerJS · free · no account needed
+    </div>
+  `;
+
   document.body.appendChild(panel);
 }
 
+function updateMpStatus(msg, color) {
+  const el = document.getElementById("mpStatus");
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color      = color==="green"?"#06d6a0":color==="red"?"#ef4444":color==="orange"?"#ffd60a":"rgba(255,255,255,.75)";
+  el.style.background = color==="green"?"rgba(6,214,160,0.1)":color==="red"?"rgba(239,68,68,0.1)":color==="orange"?"rgba(255,214,10,0.1)":"rgba(255,255,255,0.05)";
+}
+
 window.mpHost = () => {
-  const code = document.getElementById("mpCode").value.trim();
-  if (!code) { document.getElementById("mpStatus").textContent="Enter a room code!"; return; }
+  const code = (document.getElementById("mpCode")?.value||"").trim().toLowerCase().replace(/\s+/g,"");
+  if (!code) { updateMpStatus("Please enter a room code first!", "red"); return; }
+  updateMpStatus(`Setting up room "${code}"…`, "orange");
   netSetupHost(code);
-  document.getElementById("mpStatus").textContent = `Hosting room "${code}" — waiting for partner…`;
 };
+
 window.mpJoin = () => {
-  const code = document.getElementById("mpCode").value.trim();
-  if (!code) { document.getElementById("mpStatus").textContent="Enter a room code!"; return; }
+  const code = (document.getElementById("mpCodeJoin")?.value||document.getElementById("mpCode")?.value||"").trim().toLowerCase().replace(/\s+/g,"");
+  if (!code) { updateMpStatus("Please enter the room code!", "red"); return; }
+  updateMpStatus(`Connecting to "${code}"…`, "orange");
   netSetupGuest(code);
-  document.getElementById("mpStatus").textContent = `Joining room "${code}"…`;
 };
+
 window.showMultiplayerPanel = showMultiplayerPanel;
+
+// Guard rollDice so the wrong player can't roll on their own screen
+const _origRollDice = window.rollDice;
+window.rollDice = function() {
+  if (netRole && !isMyPlayerTurn()) {
+    showToast("⏳ Not your turn yet!", 1500);
+    return;
+  }
+  if (_origRollDice) _origRollDice();
+};
