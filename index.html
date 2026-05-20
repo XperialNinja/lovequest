@@ -16,7 +16,7 @@
   <div id="topBar">
     <div id="gameTitle">
       LoveQuest 💖
-      <span>Alpha v3</span>
+      <span>Alpha v4</span>
     </div>
     <div id="roundBadge">Round <span id="roundNum">1</span></div>
   </div>
@@ -85,6 +85,8 @@
     <div class="leg-row"><div class="leg-dot" style="background:#f4845f"></div>⚔️ Duel</div>
     <div class="leg-row"><div class="leg-dot" style="background:#38b000"></div>🛒 Board Shop</div>
     <div class="leg-row"><div class="leg-dot" style="background:#7209b7"></div>⚗️ Duel Shop</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#ffd60a"></div>🐝 Bee Deity</div>
+    <div class="leg-row"><div class="leg-dot" style="background:#ff6b9d"></div>💖 +1 Star</div>
     <div class="leg-row"><div class="leg-dot" style="background:#06d6a0"></div>🏠 START</div>
     <div class="leg-divider"></div>
     <div class="leg-note">○○ = Fork ahead</div>
@@ -148,9 +150,11 @@
   <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
   <script src="config.js"></script>
   <script src="music.js"></script>
+  <script src="deity.js"></script>
   <script src="game.js"></script>
   <script src="minigames.js"></script>
   <script src="duel.js"></script>
+  <script src="menu.js"></script>
   <script>
     document.addEventListener("DOMContentLoaded", () => {
       document.getElementById("pc-name-0").textContent = CONFIG.couple.player1.name;
@@ -164,7 +168,7 @@
       dots[2].style.background = CONFIG.couple.ai1.color;
       dots[3].style.background = CONFIG.couple.ai2.color;
 
-      initGame();
+      // initGame() is now called by menu.js after the cinematic
     });
   </script>
 
