@@ -3286,7 +3286,7 @@ function netSetupHost(roomCode, menuCb) {
   netRole = "host";
 
   netPeer = new Peer(`lovequest-${roomCode}`, {
-    host:"0.peerjs.com", port:443, path:"/", secure:true, debug:0,
+    
   });
 
   netPeer.on("open", () => {
@@ -3328,7 +3328,7 @@ function netSetupGuest(roomCode, menuCb) {
   cleanupPeer();
   netRole = "guest";
 
-  netPeer = new Peer({ host:"0.peerjs.com", port:443, path:"/", secure:true, debug:0 });
+  netPeer = new Peer({  });
 
   netPeer.on("open", () => {
     updateMpStatus(`Connecting to "${roomCode}"…`, "orange");
@@ -3464,11 +3464,21 @@ function showMultiplayerPanel() {
 }
 
 function updateMpStatus(msg, color) {
-  const el = document.getElementById("mpStatus");
-  if (!el) return;
-  el.textContent = msg;
-  el.style.color      = color==="green"?"#06d6a0":color==="red"?"#ef4444":color==="orange"?"#ffd60a":"rgba(255,255,255,.75)";
-  el.style.background = color==="green"?"rgba(6,214,160,0.1)":color==="red"?"rgba(239,68,68,0.1)":color==="orange"?"rgba(255,214,10,0.1)":"rgba(255,255,255,0.05)";
+  const colorMap = {
+    green:  { text:"#06d6a0", bg:"rgba(6,214,160,0.1)"   },
+    red:    { text:"#ef4444", bg:"rgba(239,68,68,0.1)"   },
+    orange: { text:"#ffd60a", bg:"rgba(255,214,10,0.1)"  },
+  };
+  const c = colorMap[color] || { text:"rgba(255,255,255,.75)", bg:"rgba(255,255,255,0.05)" };
+  // Update whichever status element is currently visible
+  ["mpStatus","menuMpStatus"].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = msg;
+    el.style.color = c.text;
+    el.style.background = c.bg;
+  });
+  console.log(`[MP] ${color?.toUpperCase()||"INFO"}: ${msg}`);
 }
 
 window.mpHost = () => {
