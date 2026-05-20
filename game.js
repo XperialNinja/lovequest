@@ -234,6 +234,7 @@ function initGame() {
   updateHUD();
   focusOnCurrentPlayer(true);
   requestAnimationFrame(gameLoop);
+  spawnCSSHearts();
   initGameExtras();
 
   // ── Initial roll-off to decide turn order ────────────────
@@ -242,6 +243,7 @@ function initGame() {
 
 // Roll-off: all 4 players roll, highest goes first
 function doRollOff() {
+  if (window._cinematicPlaying) return; // cinematic not done yet
   showToast("🎲 Everyone rolls to decide turn order!", 2500);
 
   const overlay = document.createElement("div");
@@ -342,6 +344,19 @@ function initGameExtras() {
       MG.forcedMode = modeMap[e.key];
       triggerMinigame(players[currentPlayerIndex], endTurn);
     }
+    // 7 = test deity arrival
+    if (e.key === "7" && !deityConsumed && !deityNodeId) {
+      triggerDeityArrival();
+    }
+    // 8 = test deity landing on current player
+    if (e.key === "8" && deityNodeId && !deityConsumed) {
+      handleDeityLanding(players[currentPlayerIndex], endTurn);
+    }
+    // D = instantly open deity boon dialogue on current player (testing)
+    if ((e.key === "d" || e.key === "D") && !document.getElementById("deityDialogueOv") && !document.getElementById("deityArrivalOv")) {
+      deityConsumed = false;
+      handleDeityLanding(players[currentPlayerIndex], endTurn);
+    }
     if (e.key === "e" || e.key === "E") {
       if (document.getElementById("duelOverlay")) return;
       triggerDuel(players[0], players, endTurn);
@@ -415,9 +430,10 @@ function gameLoop(ts = 0) {
 }
 
 function update(dt) {
-  camera.x    += (targetCam.x    - camera.x)    * 8  * dt;
-  camera.y    += (targetCam.y    - camera.y)    * 8  * dt;
-  camera.zoom += (targetCam.zoom - camera.zoom) * 5  * dt;
+  const lerpK = window._cinematicLerpSpeed || 8;
+  camera.x    += (targetCam.x    - camera.x)    * lerpK * dt;
+  camera.y    += (targetCam.y    - camera.y)    * lerpK * dt;
+  camera.zoom += (targetCam.zoom - camera.zoom) * (window._cinematicLerpSpeed ? lerpK : 5) * dt;
 
   players.forEach(p => { p.bounceT += dt * 3; });
 
@@ -976,18 +992,28 @@ function handleLanding(player) {
 
   setTimeout(() => {
     switch (type) {
-      case "blue":
-        player.coins += 3;
-        if (player.stats) { player.stats.blueLanded++; player.stats.coinsEarned += 3; }
-        spawnFloat(player, "+3 💰", "#4cc9f0");
-        updateHUD(); endTurn(); break;
+      case "deity":
+        handleDeityLanding(player, endTurn); break;
 
-      case "red":
+      case "blue": {
+        const gain = deityApplyCoinChange(player, 3);
+        player.coins += gain;
+        if (player.stats) { player.stats.blueLanded++; player.stats.coinsEarned += gain; }
+        spawnFloat(player, `+${gain} 💰${gain>3?" 🍯":""}`, "#4cc9f0");
+        updateHUD(); endTurn(); break;
+      }
+      case "red": {
+        const change = deityApplyCoinChange(player, -3);
         if (player.stats) player.stats.redLanded++;
-        player.coins = Math.max(0, player.coins - 3);
-        spawnFloat(player, "-3 💰", "#ef233c");
+        if (change >= 0) {
+          player.coins += change;
+          spawnFloat(player, `+${change} 💰🍯`, "#ffd60a");
+        } else {
+          player.coins = Math.max(0, player.coins + change);
+          spawnFloat(player, `${change} 💰`, "#ef233c");
+        }
         updateHUD(); endTurn(); break;
-
+      }
       case "minigame":
         showSpacePopup("🎮", "Mini Game!\nGet ready…", "#a855f7", () => {
           triggerMinigame(player, endTurn);
@@ -1321,28 +1347,27 @@ function endTurn() {
     round++;
     document.getElementById("roundNum").textContent = round;
     if (round > CONFIG.game.totalRounds) { showGameOver(); return; }
+
+    // Round warnings
+    if (round === CONFIG.game.totalRounds) {
+      setTimeout(() => showToast("⚠️ LAST ROUND! Make it count!", 4000), 600);
+      showRoundWarningBanner("⚠️ FINAL ROUND!", "#ef233c");
+    } else if (round === CONFIG.game.totalRounds - 4) {
+      setTimeout(() => showToast("⏳ 5 rounds remaining — the end is near!", 4000), 600);
+      showRoundWarningBanner("⏳ 5 Rounds Left!", "#ffd60a");
+    }
+
+    // Round 7 — Bee Deity arrives
+    if (round === 7 && !deityConsumed) {
+      setTimeout(() => triggerDeityArrival(), 1200);
+    }
+
+    // Couple activity wheel — pause between every round
+    setTimeout(() => showCoupleActivity(resumeAfterCoupleActivity), 1800);
+    return; // resumeAfterCoupleActivity resumes the normal endTurn flow
   }
 
-  turnPhase = "idle";
-  document.getElementById("btnRoll").disabled = false;
-  document.querySelectorAll(".item-btn").forEach(b => b.disabled = false);
-  updateHUD();
-  focusOnCurrentPlayer();
-
-  const cur = players[currentPlayerIndex];
-  const isHuman = currentPlayerIndex === 0 || currentPlayerIndex === 1;
-
-  if (isHuman) {
-    // Sync full state + camera to remote screen
-    netSendTurn();
-    showToast(`🎲 ${cur.name}'s turn! Roll the dice.`, 2000);
-  } else {
-    // Broadcast that AI turn is starting so other screen follows camera
-    netBroadcast({ type:"aiTurnStart", playerIndex: currentPlayerIndex });
-    // AI plays automatically after a short pause
-    setTimeout(() => aiTakeTurn(cur), 900);
-  }
-}
+  resumeAfterCoupleActivity();
 
 // ─────────────────────────────────────────────────────────────
 //  AI TURN
@@ -1563,6 +1588,186 @@ function pickBonusCategories() {
   const valid = shuffled.filter(cat => players.some(p=>cat.get(p)>0));
   // Ensure we always have 3 (fall back to any if needed)
   return (valid.length >= 3 ? valid : shuffled).slice(0,3);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  RESUME AFTER COUPLE ACTIVITY (continues the endTurn flow)
+// ─────────────────────────────────────────────────────────────
+function resumeAfterCoupleActivity() {
+  turnPhase = "idle";
+  document.getElementById("btnRoll").disabled = false;
+  document.querySelectorAll(".item-btn").forEach(b => b.disabled = false);
+  updateHUD();
+  focusOnCurrentPlayer();
+
+  const cur = players[currentPlayerIndex];
+  const isHuman = currentPlayerIndex === 0 || currentPlayerIndex === 1;
+
+  if (isHuman) {
+    netSendTurn();
+    showToast(`🎲 ${cur.name}'s turn! Roll the dice.`, 2000);
+  } else {
+    netBroadcast({ type:"aiTurnStart", playerIndex: currentPlayerIndex });
+    setTimeout(() => aiTakeTurn(cur), 900);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
+//  ROUND WARNING BANNER
+// ─────────────────────────────────────────────────────────────
+function showRoundWarningBanner(text, color) {
+  const old = document.getElementById("roundWarningBanner");
+  if (old) old.remove();
+  const banner = document.createElement("div");
+  banner.id = "roundWarningBanner";
+  banner.textContent = text;
+  banner.style.cssText = `
+    position:fixed;top:50%;left:50%;
+    transform:translate(-50%,-50%) scale(0.6);
+    z-index:400;font-family:'Fredoka One',cursive;
+    font-size:52px;color:${color};
+    text-shadow:0 0 30px ${color},0 0 60px ${color}88,0 4px 0 rgba(0,0,0,0.5);
+    background:rgba(10,6,20,0.88);border:3px solid ${color}66;
+    border-radius:24px;padding:24px 52px;
+    pointer-events:none;opacity:0;
+    transition:transform .4s cubic-bezier(.34,1.56,.64,1),opacity .4s;
+    white-space:nowrap;`;
+  document.body.appendChild(banner);
+  requestAnimationFrame(() => {
+    banner.style.opacity = "1";
+    banner.style.transform = "translate(-50%,-50%) scale(1)";
+  });
+  setTimeout(() => {
+    banner.style.opacity = "0";
+    banner.style.transform = "translate(-50%,-50%) scale(0.85)";
+    setTimeout(() => banner.remove(), 500);
+  }, 2800);
+}
+
+// ─────────────────────────────────────────────────────────────
+//  COUPLE ACTIVITY WHEEL
+// ─────────────────────────────────────────────────────────────
+const _usedActivityIndices = new Set();
+
+function showCoupleActivity(onDone) {
+  const activities = CONFIG.coupleActivities;
+  if (!activities || activities.length === 0) { onDone && onDone(); return; }
+
+  // Reset if all used
+  if (_usedActivityIndices.size >= activities.length) _usedActivityIndices.clear();
+
+  // Pick random unused activity
+  let idx;
+  do { idx = Math.floor(Math.random() * activities.length); }
+  while (_usedActivityIndices.has(idx));
+  _usedActivityIndices.add(idx);
+
+  const activity = activities[idx];
+
+  // Build overlay
+  const ov = document.createElement("div");
+  ov.id = "coupleActivityOverlay";
+
+  // Wheel segments — all activities for visual variety (coloured by category)
+  const catColors = { talk:"#4cc9f0", sweet:"#ff6b9d", goofy:"#ffd60a", challenge:"#c77dff", find:"#06d6a0" };
+  const segs = activities.map(a => ({
+    icon: a.icon,
+    color: catColors[a.category] || "#c77dff",
+  }));
+
+  const N    = segs.length;
+  const SIZE = 260;
+  const R    = SIZE / 2;
+  const sliceDeg = 360 / N;
+  const targetCentre = idx * sliceDeg + sliceDeg / 2;
+  const stopAngle = 270 - targetCentre;
+  const totalSpin = 360 * 7 + ((stopAngle % 360) + 360) % 360;
+
+  ov.innerHTML = `
+    <div class="ca-backdrop">
+      <div class="ca-header">
+        <div class="ca-round-pill">Round ${round} Activity 💕</div>
+        <div class="ca-title">Spin to see what you're doing!</div>
+      </div>
+
+      <div class="ca-wheel-wrap">
+        <div class="ca-pointer">▼</div>
+        <canvas id="caCanvas" width="${SIZE}" height="${SIZE}"></canvas>
+        <div class="ca-center-dot"></div>
+      </div>
+
+      <div class="ca-activity-box" id="caActivityBox" style="display:none;">
+        <div class="ca-activity-icon" id="caActivityIcon"></div>
+        <div class="ca-activity-text" id="caActivityText"></div>
+      </div>
+
+      <div class="ca-actions">
+        <button class="ca-ok-btn" id="caOkBtn" style="display:none;"
+          onclick="document.getElementById('coupleActivityOverlay').remove(); (window._caOnDone && window._caOnDone());">
+          ✅ We're done — continue game!
+        </button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(ov);
+  window._caOnDone = onDone;
+
+  const canvas = ov.querySelector("#caCanvas");
+  const ctx    = canvas.getContext("2d");
+
+  function drawWheel(angleDeg) {
+    ctx.clearRect(0, 0, SIZE, SIZE);
+    segs.forEach((seg, i) => {
+      const s = ((angleDeg + i * sliceDeg) * Math.PI) / 180;
+      const e = ((angleDeg + (i+1) * sliceDeg) * Math.PI) / 180;
+      ctx.beginPath(); ctx.moveTo(R, R);
+      ctx.arc(R, R, R - 3, s, e); ctx.closePath();
+      ctx.fillStyle = seg.color; ctx.globalAlpha = 0.88; ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.strokeStyle = "rgba(255,255,255,0.2)"; ctx.lineWidth = 1.5; ctx.stroke();
+
+      ctx.save(); ctx.translate(R, R);
+      ctx.rotate(((angleDeg + i * sliceDeg + sliceDeg / 2) * Math.PI) / 180);
+      ctx.textAlign = "right"; ctx.textBaseline = "middle";
+      ctx.font = `${Math.max(10, Math.floor(14 - N * 0.1))}px serif`;
+      ctx.fillText(seg.icon, R - 10, 0);
+      ctx.restore();
+    });
+    ctx.beginPath(); ctx.arc(R, R, R - 3, 0, Math.PI*2);
+    ctx.strokeStyle = "rgba(255,255,255,0.4)"; ctx.lineWidth = 4; ctx.stroke();
+  }
+
+  drawWheel(0);
+
+  // Auto spin after short pause
+  const DURATION = 4200;
+  let startTs = null;
+  const easeOut = t => 1 - Math.pow(1 - t, 4);
+
+  setTimeout(() => {
+    function frame(ts) {
+      if (!startTs) startTs = ts;
+      const progress = Math.min((ts - startTs) / DURATION, 1);
+      drawWheel(easeOut(progress) * totalSpin % 360);
+
+      if (progress < 1) {
+        requestAnimationFrame(frame);
+      } else {
+        // Reveal the activity
+        const box  = ov.querySelector("#caActivityBox");
+        const icon = ov.querySelector("#caActivityIcon");
+        const text = ov.querySelector("#caActivityText");
+        const btn  = ov.querySelector("#caOkBtn");
+        if (box && icon && text && btn) {
+          icon.textContent = activity.icon;
+          text.textContent = activity.text;
+          box.style.display = "flex";
+          btn.style.display = "inline-block";
+        }
+      }
+    }
+    requestAnimationFrame(frame);
+  }, 500);
 }
 
 function showGameOver() {
@@ -2022,6 +2227,13 @@ function showGameOver() {
 // ─────────────────────────────────────────────────────────────
 function render() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+  // Screen-space vignette behind the board
+  const vig = ctx.createRadialGradient(canvas.width/2,canvas.height/2,0,canvas.width/2,canvas.height/2,Math.max(canvas.width,canvas.height)*0.7);
+  vig.addColorStop(0, "rgba(28,8,50,0.0)");
+  vig.addColorStop(0.6,"rgba(10,3,20,0.0)");
+  vig.addColorStop(1, "rgba(0,0,0,0.55)");
+  ctx.fillStyle = vig;
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.save();
   ctx.translate(canvas.width/2, canvas.height/2);
   ctx.scale(camera.zoom, camera.zoom);
@@ -2041,7 +2253,47 @@ function render() {
   drawStarAnim();
   drawPlayers();
   drawFloatingTexts();
+  drawWorldHearts();
 
+  ctx.restore();
+}
+
+// Ambient floating hearts in world space
+const WORLD_HEARTS = [];
+(function(){
+  const spots = [
+    [500,800],[1200,400],[1800,600],[2400,300],[900,1200],
+    [1500,1000],[2100,900],[600,1600],[1300,1500],[2000,1300],
+    [2600,700],[400,1900],[1100,1700],[1800,1800],[2500,1500],
+    [750,500],[1600,250],[2300,600],[350,1100],[2700,1200],
+  ];
+  spots.forEach(([x,y]) => {
+    WORLD_HEARTS.push({
+      x, baseY:y, t:Math.random()*Math.PI*2,
+      speed: 0.4+Math.random()*0.6,
+      amp: 80+Math.random()*80,
+      size: 12+Math.random()*20,
+      alpha: 0.05+Math.random()*0.09,
+    });
+  });
+})();
+
+function drawWorldHearts() {
+  ctx.save();
+  ctx.textAlign="center"; ctx.textBaseline="middle";
+  WORLD_HEARTS.forEach(h => {
+    h.t += 0.006 * h.speed;
+    const travel = (h.t * h.speed * 80) % (h.amp * 2.5);
+    const floatY = h.baseY - travel;
+    const fadePhase = travel / (h.amp * 2.5);
+    const alpha = h.alpha * Math.sin(fadePhase * Math.PI);
+    if (alpha < 0.004) return;
+    ctx.globalAlpha = alpha;
+    ctx.font = h.size + "px serif";
+    ctx.fillStyle = "#ff6b9d";
+    ctx.fillText(Math.random()<0.0001?"\u2665":"\u2665", h.x, floatY);
+  });
+  ctx.globalAlpha = 1;
   ctx.restore();
 }
 
@@ -2054,6 +2306,46 @@ function buildBoardCache() {
     boardCtx = boardCanvas.getContext("2d");
   }
   boardCtx.clearRect(0, 0, WORLD_W, WORLD_H);
+
+  // Board background - deep pink nebula
+  const bgGrad = boardCtx.createRadialGradient(WORLD_W*0.35, WORLD_H*0.4, 0, WORLD_W*0.35, WORLD_H*0.4, WORLD_W*0.75);
+  bgGrad.addColorStop(0,   "rgba(28,8,50,1)");
+  bgGrad.addColorStop(0.4, "rgba(18,6,32,1)");
+  bgGrad.addColorStop(1,   "rgba(8,3,16,1)");
+  boardCtx.fillStyle = bgGrad;
+  boardCtx.fillRect(0,0,WORLD_W,WORLD_H);
+
+  // Pink nebula clouds - simple radial fills
+  [ [WORLD_W*0.18, WORLD_H*0.22, WORLD_W*0.55, "rgba(255,61,127,0.09)"],
+    [WORLD_W*0.78, WORLD_H*0.68, WORLD_W*0.45, "rgba(199,125,255,0.10)"],
+    [WORLD_W*0.50, WORLD_H*0.38, WORLD_W*0.35, "rgba(255,107,157,0.07)"],
+    [WORLD_W*0.88, WORLD_H*0.15, WORLD_W*0.30, "rgba(155,69,245,0.10)"],
+    [WORLD_W*0.10, WORLD_H*0.82, WORLD_W*0.32, "rgba(255,61,127,0.07)"],
+  ].forEach(([cx,cy,r,c]) => {
+    const g = boardCtx.createRadialGradient(cx,cy,0,cx,cy,r);
+    g.addColorStop(0, c); g.addColorStop(1, "transparent");
+    boardCtx.fillStyle = g;
+    boardCtx.fillRect(0,0,WORLD_W,WORLD_H);
+  });
+
+  // Tiny embedded stars in world space
+  const BSTARS = [
+    [220,180,2.1],[600,90,1.5],[1100,140,1.8],[1600,60,1.3],[2200,200,2.0],[2700,100,1.6],
+    [400,400,1.4],[900,300,1.9],[1500,350,1.2],[2000,280,1.7],[2600,380,2.2],
+    [150,700,1.5],[700,600,2.0],[1300,700,1.3],[1900,650,1.8],[2500,580,1.4],
+    [300,1000,1.6],[850,1100,2.1],[1400,950,1.3],[2100,1050,1.9],[2700,900,1.5],
+    [180,1400,1.8],[680,1350,1.4],[1250,1300,2.0],[1800,1400,1.6],[2450,1250,1.3],
+    [400,1700,1.5],[950,1800,1.9],[1550,1650,2.2],[2100,1750,1.4],[2650,1600,1.7],
+    [500,2050,1.6],[1100,2080,1.3],[1700,1970,1.8],[2300,2060,2.0],
+  ];
+  BSTARS.forEach(([sx,sy,sr]) => {
+    boardCtx.beginPath();
+    boardCtx.arc(sx, sy, sr, 0, Math.PI*2);
+    const pink = Math.random()<0.5;
+    boardCtx.fillStyle = pink ? "rgba(255,180,210,0.45)" : "rgba(200,180,255,0.45)";
+    boardCtx.fill();
+  });
+
   drawConnections(boardCtx);
   drawSpaces(boardCtx);
 }
@@ -2061,28 +2353,62 @@ function buildBoardCache() {
 // Only animated effects (pulses, star ring) drawn each frame on main ctx
 function drawDynamicSpaceEffects() {
   BOARD_NODES.forEach(node => {
-    const isStar = node.id === starNodeId;
-    const isShop = node.type === "shop" || node.type === "duelshop";
-    if (!isStar && !isShop && node.next.length <= 1) return; // nothing animated
-    const r = isShop ? SPACE_R + 6 : SPACE_R;
+    const isStar  = node.id === starNodeId;
+    const isShop  = node.type === "shop" || node.type === "duelshop";
+    const isHeart = node.type === "heart";
+    const isEvent = node.type === "event";
+    if (!isStar && !isShop && !isHeart && !isEvent && node.next.length <= 1) return;
+    const r = isShop ? SPACE_R + 7 : SPACE_R;
 
+    // Star: triple pulsing rings
     if (isStar) {
+      const t = frameTime / 1000;
+      for (let ring = 0; ring < 3; ring++) {
+        const phase = (t * 1.4 + ring * 0.38) % 1;
+        const radius = r + 10 + phase * 32;
+        const alpha  = (1 - phase) * 0.55;
+        ctx.beginPath();
+        ctx.arc(node.x, node.y, radius, 0, Math.PI*2);
+        ctx.strokeStyle = `rgba(255,214,10,${alpha})`;
+        ctx.lineWidth   = 2.5; ctx.stroke();
+      }
+      // Steady glow ring
       const pulse = 0.5 + 0.5*Math.sin(frameTime/280);
       ctx.beginPath();
-      ctx.arc(node.x, node.y, r+10+pulse*7, 0, Math.PI*2);
-      ctx.strokeStyle = `rgba(255,214,10,${0.4+pulse*0.5})`;
+      ctx.arc(node.x, node.y, r+8+pulse*6, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(255,214,10,${0.35+pulse*0.5})`;
       ctx.lineWidth   = 3.5; ctx.stroke();
     }
+
+    // Shop: double rings with colour
     if (isShop) {
-      const pulse = 0.5 + 0.5*Math.sin(frameTime/400 + node.id);
-      const shopColor = node.type === "duelshop" ? "114,9,183" : "56,176,0";
+      const pulse = 0.5 + 0.5*Math.sin(frameTime/420 + node.id);
+      const shopRGB = node.type === "duelshop" ? "114,9,183" : "56,176,0";
       ctx.beginPath();
-      ctx.arc(node.x, node.y, r+8+pulse*6, 0, Math.PI*2);
-      ctx.strokeStyle = `rgba(${shopColor},${0.5+pulse*0.4})`;
+      ctx.arc(node.x, node.y, r+7+pulse*5, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(${shopRGB},${0.55+pulse*0.4})`;
       ctx.lineWidth   = 3; ctx.stroke();
       ctx.beginPath();
       ctx.arc(node.x, node.y, r+16+pulse*4, 0, Math.PI*2);
-      ctx.strokeStyle = `rgba(${shopColor},${0.15+pulse*0.15})`;
+      ctx.strokeStyle = `rgba(${shopRGB},${0.18+pulse*0.18})`;
+      ctx.lineWidth   = 2; ctx.stroke();
+    }
+
+    // Heart: soft pink breathe
+    if (isHeart) {
+      const pulse = 0.5 + 0.5*Math.sin(frameTime/600 + node.id*0.8);
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r+5+pulse*5, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(255,107,157,${0.25+pulse*0.35})`;
+      ctx.lineWidth   = 2; ctx.stroke();
+    }
+
+    // Event: slow purple breathe
+    if (isEvent) {
+      const pulse = 0.5 + 0.5*Math.sin(frameTime/800 + node.id*1.2);
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, r+5+pulse*4, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(199,125,255,${0.2+pulse*0.3})`;
       ctx.lineWidth   = 2; ctx.stroke();
     }
   });
@@ -2091,24 +2417,45 @@ function drawDynamicSpaceEffects() {
 // ── CONNECTIONS ──────────────────────────────────────────────
 function drawConnections(c) {
   c = c || ctx;
+
+  // Shortcut path tint colours (by source node id)
+  const TINTS = {};
+  [40,41,42,43,44,45,46,47,48,49].forEach(id=>TINTS[id]="rgba(239,35,60,0.20)");
+  [50,51,52,53,54,55,56,57].forEach(id=>TINTS[id]="rgba(255,107,157,0.20)");
+  [65,66,67,68,69,110,111].forEach(id=>TINTS[id]="rgba(244,132,95,0.20)");
+  [80,81,82,83,84,85,86,87,88,89].forEach(id=>TINTS[id]="rgba(199,125,255,0.20)");
+
   BOARD_NODES.forEach(node => {
     node.next.forEach(nextId => {
       const next = NODE_MAP[nextId]; if (!next) return;
+      const tint = TINTS[node.id] || TINTS[nextId] || null;
 
-      // Thick pale track
+      // Shortcut glow
+      if (tint) {
+        c.beginPath();
+        c.moveTo(node.x, node.y); c.lineTo(next.x, next.y);
+        c.strokeStyle = tint;
+        c.lineWidth = 30; c.lineCap = "round"; c.stroke();
+      }
+
+      // Outer road
       c.beginPath();
       c.moveTo(node.x, node.y); c.lineTo(next.x, next.y);
-      c.strokeStyle = "rgba(255,255,255,0.10)";
-      c.lineWidth   = 18; c.lineCap = "round";
-      c.stroke();
+      c.strokeStyle = "rgba(255,255,255,0.06)";
+      c.lineWidth = 22; c.lineCap = "round"; c.stroke();
 
-      // Dashed centre line
+      // Inner pink-tinted road
       c.beginPath();
-      c.setLineDash([9,9]);
       c.moveTo(node.x, node.y); c.lineTo(next.x, next.y);
-      c.strokeStyle = "rgba(255,255,255,0.22)";
-      c.lineWidth   = 3;
-      c.stroke();
+      c.strokeStyle = "rgba(255,107,157,0.07)";
+      c.lineWidth = 12; c.lineCap = "round"; c.stroke();
+
+      // Dashed centre
+      c.beginPath();
+      c.setLineDash([11,10]);
+      c.moveTo(node.x, node.y); c.lineTo(next.x, next.y);
+      c.strokeStyle = tint ? "rgba(255,200,200,0.45)" : "rgba(255,133,179,0.25)";
+      c.lineWidth = 3; c.stroke();
       c.setLineDash([]);
     });
   });
@@ -2121,57 +2468,92 @@ function drawSpaces(c) {
 }
 
 function drawSpace(node, c) {
-  c = c || ctx;
+  if (node.type === "deity") {
+    if (typeof drawDeitySpace === "function") drawDeitySpace(node, c);
+    return;
+  }
   const isStar = node.id === starNodeId;
   const isShop = node.type === "shop" || node.type === "duelshop";
   const cfg    = CONFIG.spaceColors[node.type] || CONFIG.spaceColors.blue;
-  const r      = isShop ? SPACE_R + 6 : SPACE_R;
+  const r      = isShop ? SPACE_R + 7 : SPACE_R;
 
   // Fork dashed ring
   if (node.next.length > 1) {
     c.beginPath();
-    c.arc(node.x, node.y, r+7, 0, Math.PI*2);
-    c.strokeStyle = "rgba(255,255,255,0.5)";
-    c.lineWidth   = 2; c.setLineDash([4,4]); c.stroke();
+    c.arc(node.x, node.y, r+9, 0, Math.PI*2);
+    c.strokeStyle = "rgba(255,133,179,0.55)";
+    c.lineWidth = 2; c.setLineDash([5,4]); c.stroke();
     c.setLineDash([]);
   }
 
+  // Outer glow ring (type-coloured)
+  const glowColor = isStar ? "#ffd60a" : cfg.bg;
+  c.beginPath();
+  c.arc(node.x, node.y, r+5, 0, Math.PI*2);
+  c.strokeStyle = glowColor + "44";
+  c.lineWidth = 6; c.stroke();
+
   // Drop shadow
   c.beginPath();
-  c.arc(node.x, node.y+5, r, 0, Math.PI*2);
-  c.fillStyle = "rgba(0,0,0,0.4)"; c.fill();
+  c.arc(node.x, node.y+6, r, 0, Math.PI*2);
+  const shadowG = c.createRadialGradient(node.x, node.y+6, 0, node.x, node.y+6, r);
+  shadowG.addColorStop(0, "rgba(0,0,0,0.5)");
+  shadowG.addColorStop(1, "rgba(0,0,0,0)");
+  c.fillStyle = shadowG; c.fill();
 
-  // Body
+  // Body gradient
   c.beginPath();
   c.arc(node.x, node.y, r, 0, Math.PI*2);
-  c.fillStyle = isStar ? "#ffd60a" : cfg.bg;
-  c.fill();
+  const bodyColor = isStar ? "#ffd60a" : cfg.bg;
+  const bodyG = c.createRadialGradient(
+    node.x - r*0.3, node.y - r*0.3, 0,
+    node.x, node.y, r*1.15
+  );
+  // Parse hex color to make lighter/darker variants
+  const hex = bodyColor.replace("#","");
+  const rr = parseInt(hex.slice(0,2),16), gg = parseInt(hex.slice(2,4),16), bb = parseInt(hex.slice(4,6),16);
+  const lighten = (v,a) => Math.min(255, Math.round(v + (255-v)*a));
+  const darken  = (v,a) => Math.round(v * (1-a));
+  bodyG.addColorStop(0, `rgb(${lighten(rr,.35)},${lighten(gg,.35)},${lighten(bb,.35)})`);
+  bodyG.addColorStop(0.55, bodyColor);
+  bodyG.addColorStop(1, `rgb(${darken(rr,.3)},${darken(gg,.3)},${darken(bb,.3)})`);
+  c.fillStyle = bodyG; c.fill();
 
-  // Inner highlight
+  // Inner glass shine (top-left)
   c.beginPath();
-  c.arc(node.x - r*0.2, node.y - r*0.25, r*0.42, 0, Math.PI*2);
-  c.fillStyle = "rgba(255,255,255,0.14)"; c.fill();
+  c.arc(node.x - r*0.22, node.y - r*0.28, r*0.38, 0, Math.PI*2);
+  c.fillStyle = "rgba(255,255,255,0.18)"; c.fill();
+
+  // Smaller secondary shine
+  c.beginPath();
+  c.arc(node.x + r*0.3, node.y + r*0.3, r*0.15, 0, Math.PI*2);
+  c.fillStyle = "rgba(255,255,255,0.08)"; c.fill();
 
   // Rim
   c.beginPath();
   c.arc(node.x, node.y, r, 0, Math.PI*2);
-  c.strokeStyle = "rgba(255,255,255,0.42)";
-  c.lineWidth = 2.5; c.stroke();
+  c.strokeStyle = "rgba(255,255,255,0.5)";
+  c.lineWidth = 2; c.stroke();
 
-  // Icon — centered with emoji offset correction
-  const iconSize = Math.round(r * 0.88);
+  // Pink rim accent for human-interest spaces
+  if (["heart","event","minigame"].includes(node.type)) {
+    c.beginPath();
+    c.arc(node.x, node.y, r, 0, Math.PI*2);
+    c.strokeStyle = "rgba(255,107,157,0.55)";
+    c.lineWidth = 1.5; c.stroke();
+  }
+
+  // Icon
+  const iconSize = Math.round(r * 0.86);
   c.save();
   c.font = `${iconSize}px serif`;
   c.textAlign = "center";
-  c.textBaseline = "alphabetic";  // more reliable cross-browser centering for emoji
-  c.shadowColor = "rgba(0,0,0,0.85)";
-  c.shadowBlur   = 5;
-  c.shadowOffsetX = 0;
-  c.shadowOffsetY = 0;
-  c.globalAlpha  = 1;
-  // Offset: alphabetic baseline sits ~70% up the em box; nudge up ~30% of icon size
+  c.textBaseline = "alphabetic";
+  c.shadowColor = "rgba(0,0,0,0.9)";
+  c.shadowBlur  = 6;
+  c.shadowOffsetY = 1;
   const emojiY = node.y + iconSize * 0.30;
-  c.fillText(isStar ? "⭐" : cfg.icon, node.x, emojiY);
+  c.fillText(isStar ? "\u2B50" : cfg.icon, node.x, emojiY);
   c.restore();
 }
 
@@ -2284,41 +2666,82 @@ function drawPlayers() {
     const bounce = Math.sin(p.bounceT) * 5;
     const px = p.x + p.offset.x;
     const py = p.y + p.offset.y + bounce;
-    const R  = 24;
+    const R  = 26;
 
+    // Outer glow halo
+    const halo = ctx.createRadialGradient(px, py, R*0.6, px, py, R+16);
+    halo.addColorStop(0, p.color + "55");
+    halo.addColorStop(1, "transparent");
     ctx.beginPath();
-    ctx.ellipse(px, p.y+p.offset.y+R+5, R*0.7, R*0.25, 0, 0, Math.PI*2);
-    ctx.fillStyle = "rgba(0,0,0,0.3)"; ctx.fill();
+    ctx.arc(px, py, R+16, 0, Math.PI*2);
+    ctx.fillStyle = halo; ctx.fill();
 
+    // Drop shadow
+    ctx.beginPath();
+    ctx.ellipse(px, p.y+p.offset.y+R+7, R*0.65, R*0.22, 0, 0, Math.PI*2);
+    ctx.fillStyle = "rgba(0,0,0,0.4)"; ctx.fill();
+
+    // Coloured background ring
+    ctx.beginPath();
+    ctx.arc(px, py, R+4, 0, Math.PI*2);
+    ctx.fillStyle = p.color + "33"; ctx.fill();
+
+    // Image or fallback circle
     if (p.image && p.image.complete && p.image.naturalWidth>0 && !p.image._failed) {
       ctx.save();
-      ctx.beginPath(); ctx.arc(px,py,R+2,0,Math.PI*2); ctx.clip();
-      ctx.drawImage(p.image, px-R-2, py-R-2, (R+2)*2, (R+2)*2);
+      ctx.beginPath(); ctx.arc(px, py, R+1, 0, Math.PI*2); ctx.clip();
+      ctx.drawImage(p.image, px-R-1, py-R-1, (R+1)*2, (R+1)*2);
       ctx.restore();
     } else {
-      ctx.beginPath(); ctx.arc(px,py,R+2,0,Math.PI*2);
-      ctx.fillStyle = p.color; ctx.fill();
-      ctx.font = `${R*1.1}px serif`;
+      // Gradient fill fallback
+      const fbG = ctx.createRadialGradient(px-R*0.25, py-R*0.25, 0, px, py, R+2);
+      fbG.addColorStop(0, p.color + "ff");
+      fbG.addColorStop(1, p.color + "aa");
+      ctx.beginPath(); ctx.arc(px, py, R+1, 0, Math.PI*2);
+      ctx.fillStyle = fbG; ctx.fill();
+      ctx.font = `${R*1.05}px serif`;
       ctx.textAlign="center"; ctx.textBaseline="middle";
       ctx.fillText(p.emoji, px, py);
     }
 
-    ctx.beginPath(); ctx.arc(px,py,R+2,0,Math.PI*2);
-    ctx.strokeStyle="white"; ctx.lineWidth=2.5; ctx.stroke();
+    // White rim
+    ctx.beginPath(); ctx.arc(px, py, R+1, 0, Math.PI*2);
+    ctx.strokeStyle = "rgba(255,255,255,0.85)";
+    ctx.lineWidth = 2.5; ctx.stroke();
+
+    // Coloured rim
+    ctx.beginPath(); ctx.arc(px, py, R+3, 0, Math.PI*2);
+    ctx.strokeStyle = p.color + "88";
+    ctx.lineWidth = 2; ctx.stroke();
 
     // Name tag
     ctx.font = "bold 11px 'Nunito', sans-serif";
-    const tw = ctx.measureText(p.name).width+10;
-    ctx.fillStyle="rgba(0,0,0,0.65)";
-    rrect(px-tw/2, py-R-23, tw, 16, 6);
-    ctx.fill();
-    ctx.fillStyle="white"; ctx.textAlign="center"; ctx.textBaseline="middle";
-    ctx.fillText(p.name, px, py-R-15);
+    const tw = ctx.measureText(p.name).width + 12;
+    const th = 17;
+    const tx = px - tw/2, ty = py - R - 24;
 
-    if (players[currentPlayerIndex]===p && turnPhase==="idle") {
-      ctx.beginPath(); ctx.arc(px,py,R+9,0,Math.PI*2);
-      ctx.strokeStyle="gold"; ctx.lineWidth=3;
-      ctx.setLineDash([6,4]); ctx.stroke(); ctx.setLineDash([]);
+    // Tag background
+    ctx.beginPath();
+    ctx.roundRect ? ctx.roundRect(tx,ty,tw,th,8) : rrect(tx,ty,tw,th,8);
+    const tagG = ctx.createLinearGradient(tx,ty,tx,ty+th);
+    tagG.addColorStop(0, "rgba(18,6,32,0.92)");
+    tagG.addColorStop(1, "rgba(10,3,20,0.92)");
+    ctx.fillStyle = tagG; ctx.fill();
+    ctx.strokeStyle = p.color + "66";
+    ctx.lineWidth = 1; ctx.stroke();
+
+    // Tag text
+    ctx.fillStyle = "white";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText(p.name, px, ty + th/2);
+
+    // Active player gold dashed ring
+    if (players[currentPlayerIndex] === p && (turnPhase==="idle"||turnPhase==="rolling")) {
+      const pulse = 0.5 + 0.5*Math.sin(frameTime/250);
+      ctx.beginPath(); ctx.arc(px, py, R+10+pulse*3, 0, Math.PI*2);
+      ctx.strokeStyle = `rgba(255,215,0,${0.6+pulse*0.4})`;
+      ctx.lineWidth = 3;
+      ctx.setLineDash([7,5]); ctx.stroke(); ctx.setLineDash([]);
     }
   });
 }
@@ -2395,6 +2818,13 @@ function updateHUD() {
           html += `<span class="inv-item inv-duel inv-perm" title="Iron Body: +${p.bonusMaxHp} max HP permanently">❤️‍🔥<sup>+${p.bonusMaxHp}</sup></span>`;
         }
       }
+      // Deity boons (shown separately from items, before divider)
+      const boonHtml = typeof getPlayerBoonHtml === "function" ? getPlayerBoonHtml(p) : "";
+      if (boonHtml) {
+        if (html) html = boonHtml + `<span class="inv-divider">|</span>` + html;
+        else html = boonHtml;
+      }
+
       inv.innerHTML = html || `<span class="inv-empty">No items</span>`;
     }
 
@@ -2848,7 +3278,7 @@ function isMyPlayerTurn() {
 }
 
 // ── HOST SETUP ───────────────────────────────────────────────
-function netSetupHost(roomCode) {
+function netSetupHost(roomCode, menuCb) {
   if (typeof Peer === "undefined") {
     updateMpStatus("❌ PeerJS not loaded — check internet connection.", "red"); return;
   }
@@ -2867,15 +3297,18 @@ function netSetupHost(roomCode) {
     netConn = conn;
     conn.on("open", () => {
       updateMpStatus("💕 She's connected! Syncing game…", "green");
-      showToast("💕 Partner connected — syncing!", 2500);
-      // Push full state so her screen matches yours instantly
-      conn.send({ type:"sync", gameState: netSerialiseState() });
+      if (menuCb?.onConnected) menuCb.onConnected();
+      // Only sync state if game already running
+      if (typeof netSerialiseState === "function" && typeof players !== "undefined" && players.length) {
+        conn.send({ type:"sync", gameState: netSerialiseState() });
+      }
     });
     conn.on("data", netHandleData);
     conn.on("close", () => {
       netConn = null;
       updateMpStatus("⚠️ Partner disconnected.", "orange");
-      showToast("⚠️ Partner disconnected.", 3000);
+      if (menuCb?.onDisconnect) menuCb.onDisconnect();
+      else showToast("⚠️ Partner disconnected.", 3000);
     });
   });
 
@@ -2888,7 +3321,7 @@ function netSetupHost(roomCode) {
 }
 
 // ── GUEST SETUP ──────────────────────────────────────────────
-function netSetupGuest(roomCode) {
+function netSetupGuest(roomCode, menuCb) {
   if (typeof Peer === "undefined") {
     updateMpStatus("❌ PeerJS not loaded — check internet connection.", "red"); return;
   }
@@ -2902,14 +3335,22 @@ function netSetupGuest(roomCode) {
     netConn = netPeer.connect(`lovequest-${roomCode}`, { reliable:true });
 
     netConn.on("open", () => {
-      updateMpStatus("💕 Connected! Waiting for game sync…", "green");
-      showToast("💕 Connected to his game!", 2500);
+      updateMpStatus("💕 Connected! Waiting for host to start…", "green");
+      if (menuCb?.onConnected) menuCb.onConnected();
     });
-    netConn.on("data", netHandleData);
+    netConn.on("data", data => {
+      // Intercept menuStart before game boots
+      if (data.type === "menuStart") {
+        if (menuCb?.onGameStart) menuCb.onGameStart();
+        return;
+      }
+      netHandleData(data);
+    });
     netConn.on("close", () => {
       netConn = null;
       updateMpStatus("⚠️ Lost connection to host.", "orange");
-      showToast("⚠️ Lost connection.", 3000);
+      if (menuCb?.onDisconnect) menuCb.onDisconnect();
+      else showToast("⚠️ Lost connection.", 3000);
     });
   });
 
@@ -3055,3 +3496,23 @@ window.rollDice = function() {
   }
   if (_origRollDice) _origRollDice();
 };
+
+// Spawn floating heart elements in the HTML background layer
+function spawnCSSHearts() {
+  const hearts = ["♥","♥","❤","♥","❤","❤️","♥","❤"];
+  const count  = 18;
+  for (let i = 0; i < count; i++) {
+    const el = document.createElement("div");
+    el.className = "heart-bg";
+    el.textContent = hearts[Math.floor(Math.random()*hearts.length)];
+    el.style.left   = Math.random()*100 + "vw";
+    el.style.bottom = "-40px";
+    el.style.fontSize = (10 + Math.random()*18) + "px";
+    el.style.animationDuration  = (14 + Math.random()*18) + "s";
+    el.style.animationDelay     = (Math.random()*16) + "s";
+    el.style.opacity = "0";
+    el.style.color = Math.random()<0.6 ? "#ff6b9d" : "#c77dff";
+    document.body.appendChild(el);
+  }
+}
+}

@@ -330,8 +330,18 @@ const DUEL = (() => {
         makeFighter(allPlayers[3], 1),
       ];
     } else {
-      const others   = allPlayers.filter(p => p !== landingPlayer);
-      const opponent = others[Math.floor(Math.random() * others.length)];
+      // 1v1: human players always fight AI, AI always fights a human
+      const landingIsHuman = landingPlayer.index <= 1;
+      let opponent;
+      if (landingIsHuman) {
+        // Human landed — pick a random AI opponent (index 2 or 3)
+        const aiOpponents = allPlayers.filter(p => p.index >= 2);
+        opponent = aiOpponents[Math.floor(Math.random() * aiOpponents.length)];
+      } else {
+        // AI landed — pick a random human opponent (index 0 or 1)
+        const humanOpponents = allPlayers.filter(p => p.index <= 1);
+        opponent = humanOpponents[Math.floor(Math.random() * humanOpponents.length)];
+      }
       fighters = [
         makeFighter(landingPlayer, 0),
         makeFighter(opponent, 1),
@@ -366,10 +376,15 @@ const DUEL = (() => {
     };
 
     if (is2v2) {
-      placeOnGrid(fighters[0], 1, 1);
-      placeOnGrid(fighters[1], 2, 1);
-      placeOnGrid(fighters[2], GRID_ROWS-2, GRID_COLS-2);
-      placeOnGrid(fighters[3], GRID_ROWS-3, GRID_COLS-2);
+      // Place by TEAM, not by array index — sort ruins the grouping
+      const team0 = fighters.filter(f => f.teamIndex === 0);
+      const team1 = fighters.filter(f => f.teamIndex === 1);
+      // Team 0 (You + Her) — top-left quadrant
+      placeOnGrid(team0[0], 1, 1);
+      placeOnGrid(team0[1], 2, 1);
+      // Team 1 (Romeo + Juliet) — bottom-right quadrant
+      placeOnGrid(team1[0], GRID_ROWS-2, GRID_COLS-2);
+      placeOnGrid(team1[1], GRID_ROWS-3, GRID_COLS-2);
     } else {
       placeOnGrid(fighters[0], 1, 2);
       placeOnGrid(fighters[1], GRID_ROWS-2, GRID_COLS-3);
@@ -397,15 +412,21 @@ const DUEL = (() => {
       teamIndex,
       row: 0, col: 0,
       hand: [],
-      deck: shuffleDeck(),
+      deck: shuffleDeck(boardPlayer),
       initRoll: 0,
       extraCards,
       meleePowerBonus,
     };
   }
 
-  function shuffleDeck() {
+  function shuffleDeck(boardPlayer) {
+    // Start with double base deck
     const deck = [...ALL_CARDS, ...ALL_CARDS].map(c => ({...c}));
+    // Add deity cards permanently (2 copies each)
+    if (typeof getDeityCardsForPlayer === "function" && boardPlayer) {
+      const deityCards = getDeityCardsForPlayer(boardPlayer);
+      deityCards.forEach(dc => { deck.push({...dc}); deck.push({...dc}); });
+    }
     for (let i = deck.length-1; i > 0; i--) {
       const j = Math.floor(Math.random()*(i+1));
       [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -438,7 +459,7 @@ const DUEL = (() => {
     f.hand = [];
     const drawCount = HAND_SIZE + (f.extraCards || 0);
     for (let i = 0; i < drawCount; i++) {
-      if (f.deck.length === 0) f.deck = shuffleDeck();
+      if (f.deck.length === 0) f.deck = shuffleDeck(f.boardPlayer);
       f.hand.push(f.deck.pop());
     }
     duelState.hand = f.hand;
@@ -795,7 +816,7 @@ function playCard(card, target) {
   function doAttack(attacker, defender, card, cb) {
     const fromPx = cellToPx(attacker.row, attacker.col);
     const toPx   = cellToPx(defender.row, defender.col);
-    const isMelee  = card.id === "melee";
+    const isMelee  = card.id === "melee" || card.id === "bee_sting_card";
     const isRanged = card.id === "ranged";
     const meleeBonus = (isMelee && attacker.meleePowerBonus) ? attacker.meleePowerBonus : 0;
     const dmg = randInt(card.dmgMin, card.dmgMax) + meleeBonus;
@@ -808,6 +829,22 @@ function playCard(card, target) {
       onDone: () => {
         applyDamage(defender, dmg);
         addShake(defender);
+        // Bee Sting recoil
+        if (card.recoil && card.recoil > 0) {
+          applyDamage(attacker, card.recoil);
+          const apx = cellToPx(attacker.row, attacker.col);
+          addFloatText(apx.x, apx.y - 40, `-${card.recoil} recoil 🐝`, "#ffd60a", 1200);
+        }
+        // Royal Jelly draw extra
+        if (card.drawExtra && card.drawExtra > 0) {
+          for (let i = 0; i < card.drawExtra; i++) {
+            if (attacker.deck.length === 0) attacker.deck = shuffleDeck(attacker.boardPlayer);
+            attacker.hand.push(attacker.deck.pop());
+          }
+          duelState.hand = attacker.hand;
+          renderHand();
+          addFloatText(fromPx.x, fromPx.y - 60, `+${card.drawExtra} cards 🍯`, "#ffd60a", 1400);
+        }
         const dead = checkDead();
         cb && !dead && cb();
         if (dead) onFighterDead(dead);
@@ -912,6 +949,16 @@ function playCard(card, target) {
     fighter.hp = Math.min(fighter.maxHp, fighter.hp + heal);
     const px = cellToPx(fighter.row, fighter.col);
     addFloatText(px.x, px.y - 40, `+${heal} HP`, "#38b000", 1200);
+    // Royal Jelly: draw extra cards
+    if (card.drawExtra && card.drawExtra > 0) {
+      for (let i = 0; i < card.drawExtra; i++) {
+        if (fighter.deck.length === 0) fighter.deck = shuffleDeck(fighter.boardPlayer);
+        fighter.hand.push(fighter.deck.pop());
+      }
+      duelState.hand = fighter.hand;
+      renderHand();
+      addFloatText(px.x, px.y - 70, `+${card.drawExtra} cards 🍯`, "#ffd60a", 1400);
+    }
     addAnim({
       type: "healPulse",
       fighter,
